@@ -48,6 +48,14 @@ def flatten_q_sbhd(q: torch.Tensor) -> torch.Tensor:
     return q.permute(1, 0, 2, 3).reshape(seqlen_q * batch, heads, dim).contiguous()
 
 
+def to_dsa_query_sbhd(q: torch.Tensor) -> torch.Tensor:
+    """Convert canonical ``[B, S, H, D]`` to DSA public ``[S, B, H, D]``."""
+
+    if q.dim() != 4:
+        raise ValueError(f"q must have shape [B, S, H, D], got {tuple(q.shape)}")
+    return q.permute(1, 0, 2, 3).contiguous()
+
+
 def flatten_kv_sbd(kv: torch.Tensor) -> torch.Tensor:
     """Convert canonical ``[B, S_kv, D]`` to DSA ``[S_kv * B, D]``."""
 
@@ -57,6 +65,14 @@ def flatten_kv_sbd(kv: torch.Tensor) -> torch.Tensor:
     return kv.permute(1, 0, 2).reshape(seqlen_kv * batch, dim).contiguous()
 
 
+def to_dsa_kv_sbd(kv: torch.Tensor) -> torch.Tensor:
+    """Convert canonical ``[B, S_kv, D]`` to DSA public ``[S_kv, B, D]``."""
+
+    if kv.dim() != 3:
+        raise ValueError(f"kv must have shape [B, S_kv, D], got {tuple(kv.shape)}")
+    return kv.permute(1, 0, 2).contiguous()
+
+
 def unflatten_output_bshd(out_flat: torch.Tensor, batch: int, seqlen_q: int) -> torch.Tensor:
     """Convert DSA ``[S * B, H, D]`` output back to ``[B, S, H, D]``."""
 
@@ -64,3 +80,17 @@ def unflatten_output_bshd(out_flat: torch.Tensor, batch: int, seqlen_q: int) -> 
         raise ValueError(f"out_flat must have shape [S * B, H, D], got {tuple(out_flat.shape)}")
     _, heads, dim = out_flat.shape
     return out_flat.reshape(seqlen_q, batch, heads, dim).permute(1, 0, 2, 3).contiguous()
+
+
+def from_dsa_output_sbhd(out: torch.Tensor, batch: int, heads: int) -> torch.Tensor:
+    """Convert DSA public output ``[S, B, H * D]`` back to ``[B, S, H, D]``."""
+
+    if out.dim() != 3:
+        raise ValueError(f"out must have shape [S, B, H * D], got {tuple(out.shape)}")
+    seqlen_q, out_batch, hidden = out.shape
+    if out_batch != batch:
+        raise ValueError(f"output batch {out_batch} does not match input batch {batch}")
+    if hidden % heads != 0:
+        raise ValueError(f"output hidden size {hidden} is not divisible by heads={heads}")
+    dim = hidden // heads
+    return out.reshape(seqlen_q, batch, heads, dim).permute(1, 0, 2, 3).contiguous()

@@ -5,10 +5,10 @@ from typing import Literal
 import torch
 
 from dsv4_kernel_bench.indexing import (
-    flatten_kv_sbd,
-    flatten_q_sbhd,
+    from_dsa_output_sbhd,
     local_topk_to_global_flat,
-    unflatten_output_bshd,
+    to_dsa_kv_sbd,
+    to_dsa_query_sbhd,
 )
 
 SparseAttentionBackend = Literal["miles_tilelang", "nvidia_dsa"]
@@ -84,19 +84,19 @@ def run_nvidia_dsa(
     except Exception as exc:  # pragma: no cover - depends on remote image
         raise BackendUnavailable(f"NVIDIA Megatron DSA sparse attention unavailable: {exc}") from exc
 
-    batch, seqlen_q, _, _ = q.shape
+    batch, _seqlen_q, heads, _dim = q.shape
     seqlen_kv = kv.shape[1]
-    q_flat = flatten_q_sbhd(q)
-    kv_flat = flatten_kv_sbd(kv)
+    q_sbhd = to_dsa_query_sbhd(q)
+    kv_sbd = to_dsa_kv_sbd(kv)
     topk_flat = local_topk_to_global_flat(topk_idxs, seqlen_kv)
 
-    out_flat = _first_tensor(
+    out_sbhd = _first_tensor(
         dsa_sparse_attn(
-            q_flat,
-            kv_flat,
+            q_sbhd,
+            kv_sbd,
             attn_sink.float().contiguous(),
             topk_flat,
             sm_scale,
         )
     )
-    return unflatten_output_bshd(out_flat, batch, seqlen_q)
+    return from_dsa_output_sbhd(out_sbhd, batch, heads)
