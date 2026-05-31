@@ -84,11 +84,12 @@ def run_nvidia_dsa(
     except Exception as exc:  # pragma: no cover - depends on remote image
         raise BackendUnavailable(f"NVIDIA Megatron DSA sparse attention unavailable: {exc}") from exc
 
-    batch, _seqlen_q, heads, _dim = q.shape
+    batch, _seqlen_q, heads, dim = q.shape
     seqlen_kv = kv.shape[1]
     q_sbhd = to_dsa_query_sbhd(q)
     kv_sbd = to_dsa_kv_sbd(kv)
     topk_flat = local_topk_to_global_flat(topk_idxs, seqlen_kv)
+    softmax_scale = dim**-0.5 if sm_scale is None else sm_scale
 
     out_sbhd = _first_tensor(
         dsa_sparse_attn(
@@ -96,7 +97,7 @@ def run_nvidia_dsa(
             kv_sbd,
             attn_sink.float().contiguous(),
             topk_flat,
-            sm_scale,
+            softmax_scale,
         )
     )
     return from_dsa_output_sbhd(out_sbhd, batch, heads)
