@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Literal
 
 import torch
@@ -78,11 +79,11 @@ def run_nvidia_dsa(
     """Run NVIDIA Megatron DSA sparse attention through a canonical adapter."""
 
     try:
-        from megatron.core.transformer.experimental_attention_variant.dsa_kernels import (
-            dsa_sparse_attn,
-        )
+        from megatron.core.transformer.experimental_attention_variant import dsa_kernels
     except Exception as exc:  # pragma: no cover - depends on remote image
         raise BackendUnavailable(f"NVIDIA Megatron DSA sparse attention unavailable: {exc}") from exc
+
+    _patch_flash_mla_indexer_topk_compat(dsa_kernels)
 
     batch, _seqlen_q, heads, dim = q.shape
     seqlen_kv = kv.shape[1]
@@ -92,7 +93,7 @@ def run_nvidia_dsa(
     softmax_scale = dim**-0.5 if sm_scale is None else sm_scale
 
     out_sbhd = _first_tensor(
-        dsa_sparse_attn(
+        dsa_kernels.dsa_sparse_attn(
             q_sbhd,
             kv_sbd,
             attn_sink.float().contiguous(),
@@ -101,3 +102,31 @@ def run_nvidia_dsa(
         )
     )
     return from_dsa_output_sbhd(out_sbhd, batch, heads)
+
+
+def _patch_flash_mla_indexer_topk_compat(dsa_kernels) -> None:
+    """Adapt older FlashMLA wheels that predate the ``indexer_topk`` kwarg."""
+
+    try:
+        import flash_mla
+    except Exception:
+        return
+
+    original = getattr(flash_mla, "flash_mla_sparse_fwd", None)
+    if original is None:
+        return
+    try:
+        if "indexer_topk" in inspect.signature(original).parameters:
+            return
+    except (TypeError, ValueError):
+        return
+
+    def compat_flash_mla_sparse_fwd(*args, indexer_topk: int = 0, **kwargs):
+        if indexer_topk:
+            raise BackendUnavailable(
+                "installed FlashMLA does not support indexer_topk>0; "
+                "Path A/C sparse attention requires indexer_topk=0"
+            )
+        return original(*args, **kwargs)
+
+    dsa_kernels._flash_mla_sparse_fwd = compat_flash_mla_sparse_fwd
