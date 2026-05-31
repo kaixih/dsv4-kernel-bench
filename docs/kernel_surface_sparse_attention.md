@@ -54,12 +54,15 @@ Entrypoint:
 from megatron.core.transformer.experimental_attention_variant.dsa_kernels import dsa_sparse_attn
 ```
 
-The DSA path expects flattened SB row order:
+The public DSA entrypoint expects SBHD/SBD tensors and internally flattens
+them before calling FlashMLA:
 
 ```python
-q_flat: [S * B, H, D]
-kv_flat: [S_kv * B, D]
+query: [S, B, H, D]
+kv: [S_kv, B, D]
+attn_sink: [H]
 topk_idxs_flat: [S * B, TopK]
+softmax_scale: float
 ```
 
 For a local batch KV index `k` in row `(b, s)`, the global flat index is:
@@ -70,6 +73,14 @@ row = s * B + b
 ```
 
 Invalid `-1` entries remain `-1`.
+
+The public output is `[S, B, H * D]`; the harness reshapes it back to
+canonical `[B, S, H, D]`.
+
+In the `radixark/miles:deepseek-v4` image, the bundled FlashMLA wheel predates
+the `indexer_topk` keyword added by NVIDIA Megatron PR #4894. The harness
+installs a compatibility shim for Path A/C sparse attention, where
+`indexer_topk == 0`.
 
 ## First Comparison Boundary
 

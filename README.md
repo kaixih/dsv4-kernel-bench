@@ -31,4 +31,5 @@ topk_idxs: [B, S, TopK] int32  # -1 means invalid
 sm_scale: float | None
 ```
 
-See `docs/kernel_surface_sparse_attention.md` for the surface notes.
+See `docs/kernel_surface_sparse_attention.md` for the surface notes and
+`docs/b200_repro_runbook.md` for the B200 container reproduction flow.
