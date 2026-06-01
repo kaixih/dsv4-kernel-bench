@@ -398,11 +398,42 @@ Megatron's local reference explicitly defines fused post as:
 output = h_res @ original_residual + h_post * x
 ```
 
-So the next correctness step is to align the adapter convention: either pass
-`h_res.transpose(-1, -2)` into NVIDIA when treating Miles as reference, or
-confirm that the upstream callers intentionally store opposite orientations.
-Until that is resolved, fwd/bwd parity is not proven even though both kernels
-run and their pre/weight/post scalar pieces mostly agree.
+Transpose check:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cross_parity_20260601-064125/compare_transpose_metrics.json
+```
+
+When NVIDIA uses `h_res.transpose(-1, -2)` only for `fused_h_post_bda`, the
+small shape aligns end-to-end:
+
+| Case | Tensor | Before transpose | After transpose |
+| --- | --- | ---: | ---: |
+| `S=2,B=4,n=4,C=1024` | `post_output` rel-L2 | `0.4869` | `0.00424` |
+| `S=2,B=4,n=4,C=1024` | `x_grad` rel-L2 | `0.1151` | `0.00585` |
+| `S=2,B=4,n=4,C=1024` | `w_grad` rel-L2 | `0.1969` | `0.00831` |
+| `S=64,B=1,n=4,C=7168` | `post_output` rel-L2 | `0.4449` | `0.0959` |
+| `S=64,B=1,n=4,C=7168` | `x_grad` rel-L2 | `0.3720` | `0.1694` |
+| `S=64,B=1,n=4,C=7168` | `w_grad` rel-L2 | `0.4795` | `0.2173` |
+
+The remaining large-shape gap comes from the generated `comb/h_res`, not from
+the fused post operation itself. In the transpose run, `comb_raw` still differs
+from Miles by rel-L2 `0.1836` on `S=64,B=1,n=4,C=7168`; the NVIDIA path uses a
+bf16 projection weight while Miles' raw `mhc_pre_norm_fn` path used fp32.
+
+A post-only diagnostic confirms the fused post kernel and transpose convention:
+when Miles' saved `comb/post` tensors are fed directly into NVIDIA
+`fused_h_post_bda` with `comb.T`, NVIDIA matches Miles `post_output` on both
+shapes:
+
+| Case | Post-only rel-L2 | Post-only cosine |
+| --- | ---: | ---: |
+| `S=2,B=4,n=4,C=1024` | `0.00379` | `0.9999928` |
+| `S=64,B=1,n=4,C=7168` | `0.00325` | `0.9999947` |
+
+So the adapter convention is clear: treating Miles as reference, NVIDIA fused
+post needs transposed `h_res`. The next remaining parity issue is the
+pre/projection path's `comb/h_res` numerics on large hidden shapes.
 
 ### CUDA12.9 Miles-Container Performance Snapshot
 
@@ -461,9 +492,9 @@ bias:        disabled on NVIDIA fused post to match the raw Miles surface
 
 This is a better comparison than the earlier table because the NVIDIA bias term
 is disabled and both runs use the same shape list and timing loop. It is still
-not a same-image benchmark, and the post orientation mismatch above means this
-is a native-surface performance comparison rather than a correctness-certified
-drop-in replacement result.
+not a same-image benchmark, and the large-shape `comb/h_res` numeric gap above
+means this is a native-surface performance comparison rather than a fully
+correctness-certified drop-in replacement result.
 
 Miles TileKernels was also attempted in the CUDA13 SGLang image. After adding
 `z3-solver`, `tilelang`, and `tile-kernels`, imports succeeded:
@@ -497,11 +528,12 @@ Current readiness view:
 - The two-container comparison suggests Miles TileKernels is generally faster
   for larger forward-only shapes, while NVIDIA fused cuTile is materially faster
   for forward+backward on all tested shapes. Treat this as native-surface
-  performance until the `mhc_post` orientation convention is aligned.
+  performance until the large-shape `comb/h_res` numeric gap is closed.
 - The CUDA12.9 Miles-container failure should be recorded as a container/compiler
   compatibility issue. It should not block a fair NVIDIA fused cuTile perf
   comparison if the benchmark can be run in `lmsysorg/sglang:v0.5.11` or the
   intended `sglang_dev` CUDA13 image.
-- Next experiment: align `h_res` orientation in the adapter and rerun the same
-  cross-container parity harness. After that, fix the SGLang TileLang lowering
+- Next experiment: close the large-shape `comb/h_res` gap, likely by matching
+  projection weight dtype/precision or adding a pure reference comparison for
+  the projection + Sinkhorn stage. After that, fix the SGLang TileLang lowering
   issue or build a shared image for a same-runtime benchmark.

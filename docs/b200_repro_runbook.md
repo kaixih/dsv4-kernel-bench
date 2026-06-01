@@ -480,8 +480,34 @@ Miles mhc_post:        comb.T @ orig_res + post * layer_out
 NVIDIA fused_h_post:   comb   @ orig_res + post * layer_out
 ```
 
-So the next correctness rerun should transpose `h_res` in the NVIDIA adapter
-when Miles is the reference, or confirm the intended caller-side convention.
+The transpose rerun exists in the same run directory:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cross_parity_20260601-064125/compare_transpose_metrics.json
+```
+
+When NVIDIA passes `h_res.transpose(-1, -2)` into `fused_h_post_bda`, the small
+shape becomes close end-to-end:
+
+| Case | Tensor | Before transpose rel-L2 | After transpose rel-L2 |
+| --- | --- | ---: | ---: |
+| `S=2,B=4,n=4,C=1024` | `post_output` | 0.4869 | 0.00424 |
+| `S=2,B=4,n=4,C=1024` | `x_grad` | 0.1151 | 0.00585 |
+| `S=2,B=4,n=4,C=1024` | `w_grad` | 0.1969 | 0.00831 |
+| `S=64,B=1,n=4,C=7168` | `post_output` | 0.4449 | 0.0959 |
+| `S=64,B=1,n=4,C=7168` | `x_grad` | 0.3720 | 0.1694 |
+| `S=64,B=1,n=4,C=7168` | `w_grad` | 0.4795 | 0.2173 |
+
+A post-only check also fed Miles' saved `comb/post` directly into NVIDIA
+`fused_h_post_bda` with `comb.T`. That matched Miles `post_output` on both
+shapes: rel-L2 `0.00379` for `S=2,B=4,n=4,C=1024` and `0.00325` for
+`S=64,B=1,n=4,C=7168`.
+
+Read: the fused post kernel and orientation convention are now understood. For
+Miles-as-reference semantics, NVIDIA fused post should receive transposed
+`h_res`. The remaining large-shape gap is earlier in the generated `comb/h_res`
+path, likely tied to projection precision: NVIDIA fused cuTile used bf16
+projection weights, while the raw Miles TileKernels probe used fp32 weights.
 
 The current no-bias cross-container performance run is:
 
@@ -498,5 +524,5 @@ Summary:
 | `S=256,B=1,n=4,C=7168` | 0.1909 | 0.3067 | 1.2095 | 0.6767 |
 
 Interpretation: Miles is faster on larger forward-only shapes; NVIDIA fused
-cuTile is faster for fwd+bwd. This is still native-surface perf until the post
-orientation convention is aligned.
+cuTile is faster for fwd+bwd. This is still native-surface perf until the
+large-shape `comb/h_res` numeric gap is closed.
