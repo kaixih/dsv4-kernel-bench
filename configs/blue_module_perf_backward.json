@@ -1,0 +1,43 @@
+{
+  "defaults": {
+    "backend": "miles_tilelang",
+    "device": "cuda",
+    "batch": 1,
+    "heads": 64,
+    "dim": 512,
+    "window_size": 128,
+    "warmup": 2,
+    "iters": 5,
+    "backward": true
+  },
+  "cases": [
+    {
+      "name": "swa_prefill_128_bwd",
+      "selection_pattern": "swa",
+      "seqlen_q": 128,
+      "seqlen_kv": 512,
+      "raw_seqlen_kv": 512,
+      "query_start": 0,
+      "topk": 128
+    },
+    {
+      "name": "csa_prefill_128_bwd",
+      "selection_pattern": "csa",
+      "seqlen_q": 128,
+      "seqlen_kv": 512,
+      "raw_seqlen_kv": 512,
+      "query_start": 0,
+      "topk": 640,
+      "compressed_topk": 512
+    },
+    {
+      "name": "hca_prefill_256_bwd",
+      "selection_pattern": "hca",
+      "seqlen_q": 256,
+      "seqlen_kv": 256,
+      "raw_seqlen_kv": 256,
+      "query_start": 0,
+      "topk": 128
+    }
+  ]
+}

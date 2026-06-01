@@ -17,6 +17,18 @@ def _sync(device: torch.device) -> None:
 
 
 def _run_once(backend, inputs, backward: bool) -> None:
+    if not backward:
+        with torch.no_grad():
+            run_sparse_attention_backend(
+                backend,
+                inputs.q,
+                inputs.kv,
+                inputs.attn_sink,
+                inputs.topk_idxs,
+                inputs.sm_scale,
+            )
+        return
+
     q = inputs.q.detach().clone().requires_grad_(backward)
     kv = inputs.kv.detach().clone().requires_grad_(backward)
     attn_sink = inputs.attn_sink.detach().clone().requires_grad_(backward)

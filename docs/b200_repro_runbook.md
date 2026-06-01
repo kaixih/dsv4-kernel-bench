@@ -13,10 +13,10 @@ Use these persistent host paths:
 /home/scratch.kaixih_ent/repo/Megatron-LM-nvidia
 ```
 
-Known-good commits:
+Known-good source commits:
 
 ```text
-dsv4-kernel-bench: bb437998e196bcfee0a8dbc214a2bce30e306fa1
+dsv4-kernel-bench: v1-sparse-attn-harness at d883caf or newer
 miles-pr1045:       032721cd61bf7164955f084425eb9f315352fd26
 Megatron-LM-nvidia: f553f2fe4c45479d1add2bea88253f51148f25d2
 ```
@@ -75,17 +75,33 @@ export PYTHONPATH=/scratch/repo/dsv4-kernel-bench/src:/scratch/repo/miles-pr1045
 ## Required NVIDIA DSA Dependency
 
 The image contains `nvidia-cudnn-frontend==1.17.0`, which lacks `cudnn.DSA`.
-Upgrade it before running NVIDIA DSA backward:
+Forward-only NVIDIA DSA works through FlashMLA, but NVIDIA DSA backward fails
+until cuDNN Frontend is upgraded. Pin the known-good version before running
+NVIDIA DSA backward or parity tests:
 
 ```bash
-python3 -m pip install --upgrade "nvidia-cudnn-frontend[cutedsl]"
+python3 -m pip install --upgrade "nvidia-cudnn-frontend[cutedsl]==1.24.0"
 python3 - <<'PY'
 from cudnn import DSA
 print("cudnn.DSA OK", DSA)
 PY
 ```
 
-The successful run used `nvidia-cudnn-frontend==1.24.0`.
+Verification notes:
+
+```text
+nvidia-cudnn-frontend==1.17.0:
+  import cudnn succeeds
+  from cudnn import DSA fails
+
+nvidia-cudnn-frontend[cutedsl]==1.24.0:
+  from cudnn import DSA succeeds
+  cudnn.deepseek_sparse_attention is present
+  NVIDIA DSA backward passes Miles parity on D=512/H=64 CSA and SWA smoke shapes
+```
+
+Because this is installed inside a transient container, the upgrade is not
+persisted in the base `radixark/miles:deepseek-v4` image.
 
 ## Smoke Commands
 
@@ -124,6 +140,43 @@ python3 -m dsv4_kernel_bench.bench \
   --warmup 0 --iters 1 --no-backward \
   --output /tmp/bench_dsa_h64_fwd.json
 ```
+
+## Perf Matrix Commands
+
+Forward-only perf uses no-grad and reuses the same synthetic tensors across
+iterations. Backward perf intentionally clones per iteration so gradients do
+not accumulate.
+
+Run Miles forward perf:
+
+```bash
+python3 -m dsv4_kernel_bench.bench_matrix \
+  --config configs/blue_module_perf_forward.json \
+  --output-dir /tmp/dsv4-kernel-bench-runs/perf_forward_miles
+```
+
+Run NVIDIA forward perf:
+
+```bash
+python3 - <<'PY'
+import json
+src = "configs/blue_module_perf_forward.json"
+dst = "/tmp/blue_module_perf_forward_nvidia.json"
+with open(src) as f:
+    cfg = json.load(f)
+cfg["defaults"]["backend"] = "nvidia_dsa"
+with open(dst, "w") as f:
+    json.dump(cfg, f, indent=2, sort_keys=True)
+print(dst)
+PY
+
+python3 -m dsv4_kernel_bench.bench_matrix \
+  --config /tmp/blue_module_perf_forward_nvidia.json \
+  --output-dir /tmp/dsv4-kernel-bench-runs/perf_forward_nvidia
+```
+
+For backward perf, upgrade cuDNN Frontend first, then use
+`configs/blue_module_perf_backward.json` and the same backend-swap pattern.
 
 ## Known Results
 

@@ -86,6 +86,8 @@ Shapes live in JSON so the matrix can evolve without editing Python:
 
 - `configs/blue_module_smoke.json`
 - `configs/blue_module_flash_decode.json`
+- `configs/blue_module_perf_forward.json`
+- `configs/blue_module_perf_backward.json`
 
 Run a matrix:
 
