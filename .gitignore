@@ -10,3 +10,4 @@ build/
 dist/
 *.json
 !examples/*.json
+!configs/*.json

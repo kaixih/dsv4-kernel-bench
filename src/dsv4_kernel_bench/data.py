@@ -22,15 +22,18 @@ def local_window_indices(
     *,
     batch: int,
     seqlen_q: int,
+    raw_seqlen_kv: int,
     window_size: int,
+    query_start: int,
     device: str | torch.device,
 ) -> torch.Tensor:
     """Return causal sliding-window indices into the raw-KV section."""
 
-    base = torch.arange(seqlen_q, device=device).unsqueeze(1)
+    base = query_start + torch.arange(seqlen_q, device=device).unsqueeze(1)
     offsets = torch.arange(window_size, device=device)
     matrix = (base - window_size + 1).clamp(min=0) + offsets
-    matrix = torch.where(matrix > base, -1, matrix)
+    invalid = (matrix > base) | (matrix >= raw_seqlen_kv)
+    matrix = torch.where(invalid, -1, matrix)
     return matrix.unsqueeze(0).expand(batch, -1, -1).to(torch.int32).contiguous()
 
 
@@ -42,6 +45,7 @@ def newest_visible_compressed_indices(
     n_compressed: int,
     compress_ratio: int,
     compressed_topk: int,
+    query_start: int,
     device: str | torch.device,
 ) -> torch.Tensor:
     """Return latest visible compressed ids, shifted into the logical KV pool."""
@@ -49,7 +53,7 @@ def newest_visible_compressed_indices(
     if compressed_topk == 0:
         return torch.empty(batch, seqlen_q, 0, device=device, dtype=torch.int32)
 
-    positions = torch.arange(1, seqlen_q + 1, device=device).unsqueeze(1)
+    positions = query_start + torch.arange(1, seqlen_q + 1, device=device).unsqueeze(1)
     visible = (positions // compress_ratio).clamp(max=n_compressed)
     slots = torch.arange(compressed_topk, device=device).unsqueeze(0)
     start = (visible - compressed_topk).clamp(min=0)
@@ -66,6 +70,7 @@ def all_visible_compressed_indices(
     raw_seqlen_kv: int,
     n_compressed: int,
     compress_ratio: int,
+    query_start: int,
     device: str | torch.device,
 ) -> torch.Tensor:
     """Return all causally visible compressed ids, shifted into the KV pool."""
@@ -74,7 +79,7 @@ def all_visible_compressed_indices(
         return torch.empty(batch, seqlen_q, 0, device=device, dtype=torch.int32)
 
     matrix = torch.arange(n_compressed, device=device).repeat(seqlen_q, 1)
-    visible = torch.arange(1, seqlen_q + 1, device=device).unsqueeze(1) // compress_ratio
+    visible = (query_start + torch.arange(1, seqlen_q + 1, device=device).unsqueeze(1)) // compress_ratio
     matrix = torch.where(matrix < visible, matrix + raw_seqlen_kv, -1)
     return matrix.unsqueeze(0).expand(batch, -1, -1).to(torch.int32).contiguous()
 
@@ -97,6 +102,7 @@ def make_sparse_attention_inputs(
     window_size: int | None = None,
     compressed_topk: int | None = None,
     compress_ratio: int | None = None,
+    query_start: int = 0,
 ) -> SparseAttentionInputs:
     """Create synthetic canonical sparse attention inputs."""
 
@@ -111,10 +117,13 @@ def make_sparse_attention_inputs(
     raw_len = seqlen_kv if raw_seqlen_kv is None else raw_seqlen_kv
     if raw_len <= 0:
         raise ValueError("raw_seqlen_kv must be positive")
+    if query_start < 0:
+        raise ValueError("query_start must be non-negative")
 
     metadata: dict[str, int | float | str] = {
         "selection_pattern": selection_pattern,
         "raw_seqlen_kv": raw_len,
+        "query_start": query_start,
     }
 
     if selection_pattern == "random":
@@ -141,7 +150,12 @@ def make_sparse_attention_inputs(
             raise ValueError("window_size/topk must be positive for SWA")
         total_seqlen_kv = raw_len
         topk_idxs = local_window_indices(
-            batch=batch, seqlen_q=seqlen_q, window_size=window, device=device
+            batch=batch,
+            seqlen_q=seqlen_q,
+            raw_seqlen_kv=raw_len,
+            window_size=window,
+            query_start=query_start,
+            device=device,
         )
         metadata.update(
             {
@@ -161,7 +175,12 @@ def make_sparse_attention_inputs(
         n_compressed = raw_len // ratio
         total_seqlen_kv = raw_len + n_compressed
         window_idxs = local_window_indices(
-            batch=batch, seqlen_q=seqlen_q, window_size=window, device=device
+            batch=batch,
+            seqlen_q=seqlen_q,
+            raw_seqlen_kv=raw_len,
+            window_size=window,
+            query_start=query_start,
+            device=device,
         )
         if selection_pattern == "csa":
             comp_topk = max(0, topk - window) if compressed_topk is None else compressed_topk
@@ -172,6 +191,7 @@ def make_sparse_attention_inputs(
                 n_compressed=n_compressed,
                 compress_ratio=ratio,
                 compressed_topk=comp_topk,
+                query_start=query_start,
                 device=device,
             )
         else:
@@ -182,6 +202,7 @@ def make_sparse_attention_inputs(
                 raw_seqlen_kv=raw_len,
                 n_compressed=n_compressed,
                 compress_ratio=ratio,
+                query_start=query_start,
                 device=device,
             )
         topk_idxs = torch.cat([window_idxs, comp_idxs], dim=-1)

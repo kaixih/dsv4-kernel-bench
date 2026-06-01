@@ -42,6 +42,7 @@ def measure(args: argparse.Namespace) -> dict:
         window_size=args.window_size,
         compressed_topk=args.compressed_topk,
         compress_ratio=args.compress_ratio,
+        query_start=args.query_start,
     )
 
     if device.type == "cuda":
@@ -126,6 +127,12 @@ def main() -> int:
         type=int,
         default=None,
         help="Override compressor ratio. Defaults to 4 for csa and 128 for hca.",
+    )
+    parser.add_argument(
+        "--query-start",
+        type=int,
+        default=0,
+        help="Absolute raw-KV position of the first query token. Use raw_seqlen_kv - seqlen_q for decode-like shapes.",
     )
     parser.add_argument("--invalid-fraction", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=0)

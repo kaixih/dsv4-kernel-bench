@@ -62,3 +62,22 @@ def test_hca_pattern_uses_all_visible_compressed_ids():
     assert inputs.metadata["n_compressed"] == 2
     torch.testing.assert_close(inputs.topk_idxs[0, 127], torch.tensor([127, 256, -1]))
     torch.testing.assert_close(inputs.topk_idxs[0, 255], torch.tensor([255, 256, 257]))
+
+
+def test_decode_like_query_start_uses_tail_window_and_visible_compressed_ids():
+    inputs = make_sparse_attention_inputs(
+        batch=1,
+        seqlen_q=1,
+        seqlen_kv=256,
+        heads=1,
+        dim=8,
+        topk=2,
+        selection_pattern="csa",
+        window_size=2,
+        compressed_topk=2,
+        query_start=255,
+        device="cpu",
+    )
+
+    # Raw ids are 0..255 and C4 ids are appended at 256..319.
+    torch.testing.assert_close(inputs.topk_idxs[0, 0], torch.tensor([254, 255, 318, 319]))

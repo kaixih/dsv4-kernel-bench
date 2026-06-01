@@ -1,0 +1,72 @@
+{
+  "defaults": {
+    "backend": "miles_tilelang",
+    "device": "cuda",
+    "batch": 1,
+    "heads": 64,
+    "dim": 512,
+    "window_size": 128,
+    "warmup": 3,
+    "iters": 10,
+    "backward": false
+  },
+  "cases": [
+    {
+      "name": "swa_decode_2k",
+      "selection_pattern": "swa",
+      "seqlen_q": 1,
+      "seqlen_kv": 2048,
+      "raw_seqlen_kv": 2048,
+      "query_start": 2047,
+      "topk": 128
+    },
+    {
+      "name": "csa_decode_2k",
+      "selection_pattern": "csa",
+      "seqlen_q": 1,
+      "seqlen_kv": 2048,
+      "raw_seqlen_kv": 2048,
+      "query_start": 2047,
+      "topk": 640,
+      "compressed_topk": 512
+    },
+    {
+      "name": "hca_decode_8k",
+      "selection_pattern": "hca",
+      "seqlen_q": 1,
+      "seqlen_kv": 8192,
+      "raw_seqlen_kv": 8192,
+      "query_start": 8191,
+      "topk": 128
+    },
+    {
+      "name": "csa_decode_8k",
+      "selection_pattern": "csa",
+      "seqlen_q": 1,
+      "seqlen_kv": 8192,
+      "raw_seqlen_kv": 8192,
+      "query_start": 8191,
+      "topk": 640,
+      "compressed_topk": 512
+    },
+    {
+      "name": "csa_prefill_256",
+      "selection_pattern": "csa",
+      "seqlen_q": 256,
+      "seqlen_kv": 256,
+      "raw_seqlen_kv": 256,
+      "query_start": 0,
+      "topk": 640,
+      "compressed_topk": 512
+    },
+    {
+      "name": "hca_prefill_256",
+      "selection_pattern": "hca",
+      "seqlen_q": 256,
+      "seqlen_kv": 256,
+      "raw_seqlen_kv": 256,
+      "query_start": 0,
+      "topk": 128
+    }
+  ]
+}

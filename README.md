@@ -32,6 +32,14 @@ python -m dsv4_kernel_bench.bench --backend miles_tilelang --selection-pattern c
 python -m dsv4_kernel_bench.bench --backend miles_tilelang --selection-pattern hca --seqlen-q 256 --seqlen-kv 256 --window-size 4
 ```
 
+Run a JSON-defined matrix:
+
+```bash
+python -m dsv4_kernel_bench.bench_matrix \
+  --config configs/blue_module_smoke.json \
+  --output-dir /tmp/dsv4-kernel-bench-runs/smoke
+```
+
 ## Canonical Selected-KV Attention Inputs
 
 ```python
@@ -42,5 +50,6 @@ topk_idxs: [B, S, TopK] int32  # indices into kv; -1 means invalid
 sm_scale: float | None
 ```
 
-See `docs/kernel_surface_sparse_attention.md` for the surface notes and
+See `docs/kernel_surface_sparse_attention.md` for the surface notes,
+`docs/preliminary_kernel_report.md` for the first kernel comparison framing, and
 `docs/b200_repro_runbook.md` for the B200 container reproduction flow.
