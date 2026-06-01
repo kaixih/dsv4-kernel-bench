@@ -124,11 +124,21 @@ the boundaries above.
 
 ```python
 q: [B, S, H, D] bf16
-kv: [B, S_kv, D] bf16  # raw KV plus optional compressed KV
+kv: [B, S_kv, D] bf16  # logical pool: raw KV plus optional compressed KV
 attn_sink: [H] fp32
 topk_idxs: [B, S, TopK] int32  # indices into kv; -1 means invalid
 sm_scale: float | None
 ```
+
+Synthetic benchmark patterns:
+
+- `random`: random selected ids into a random KV pool; useful for pure kernel
+  smoke tests.
+- `swa`: raw KV only; selected ids are causal local-window raw-KV positions.
+- `csa`: logical KV pool is raw KV plus C4 compressed entries; selected ids are
+  local-window raw ids plus synthetic top-k C4 ids.
+- `hca`: logical KV pool is raw KV plus C128 compressed entries; selected ids
+  are local-window raw ids plus all causally visible C128 ids.
 
 The output is `out: [B, S, H, D]`.
 

@@ -24,11 +24,19 @@ python -m dsv4_kernel_bench.bench --backend miles_tilelang --device cuda --outpu
 If optional runtime dependencies are missing, backend tests skip with a clear
 reason. The index conversion tests run without GPU dependencies.
 
+Use `--selection-pattern` to choose the synthetic selected-id pattern:
+
+```bash
+python -m dsv4_kernel_bench.bench --backend miles_tilelang --selection-pattern swa
+python -m dsv4_kernel_bench.bench --backend miles_tilelang --selection-pattern csa --window-size 4 --compressed-topk 4
+python -m dsv4_kernel_bench.bench --backend miles_tilelang --selection-pattern hca --seqlen-q 256 --seqlen-kv 256 --window-size 4
+```
+
 ## Canonical Selected-KV Attention Inputs
 
 ```python
 q: [B, S, H, D] bf16
-kv: [B, S_kv, D] bf16  # raw KV plus optional compressed KV
+kv: [B, S_kv, D] bf16  # logical pool: raw KV plus optional compressed KV
 attn_sink: [H] fp32
 topk_idxs: [B, S, TopK] int32  # indices into kv; -1 means invalid
 sm_scale: float | None

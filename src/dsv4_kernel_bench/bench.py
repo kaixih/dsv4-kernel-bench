@@ -37,6 +37,11 @@ def measure(args: argparse.Namespace) -> dict:
         invalid_fraction=args.invalid_fraction,
         device=device,
         seed=args.seed,
+        selection_pattern=args.selection_pattern,
+        raw_seqlen_kv=args.raw_seqlen_kv,
+        window_size=args.window_size,
+        compressed_topk=args.compressed_topk,
+        compress_ratio=args.compress_ratio,
     )
 
     if device.type == "cuda":
@@ -66,11 +71,13 @@ def measure(args: argparse.Namespace) -> dict:
         "shape": {
             "B": args.batch,
             "S": args.seqlen_q,
-            "S_kv": args.seqlen_kv,
+            "S_kv": inputs.kv.shape[1],
+            "S_raw": inputs.metadata["raw_seqlen_kv"],
             "H": args.heads,
             "D": args.dim,
-            "TopK": args.topk,
+            "TopK": inputs.topk_idxs.shape[-1],
         },
+        "selection": inputs.metadata,
         "backward": args.backward,
         "warmup": args.warmup,
         "iters": args.iters,
@@ -90,6 +97,36 @@ def main() -> int:
     parser.add_argument("--heads", type=int, default=2)
     parser.add_argument("--dim", type=int, default=64)
     parser.add_argument("--topk", type=int, default=8)
+    parser.add_argument(
+        "--selection-pattern",
+        choices=["random", "swa", "csa", "hca"],
+        default="random",
+        help="Synthetic selected-id pattern for the logical KV pool.",
+    )
+    parser.add_argument(
+        "--raw-seqlen-kv",
+        type=int,
+        default=None,
+        help="Raw KV section length for swa/csa/hca; defaults to --seqlen-kv.",
+    )
+    parser.add_argument(
+        "--window-size",
+        type=int,
+        default=None,
+        help="Local SWA selected-id count. Defaults to --topk for swa and min(4, topk) for csa/hca.",
+    )
+    parser.add_argument(
+        "--compressed-topk",
+        type=int,
+        default=None,
+        help="CSA compressed selected-id count. Defaults to max(0, topk - window_size).",
+    )
+    parser.add_argument(
+        "--compress-ratio",
+        type=int,
+        default=None,
+        help="Override compressor ratio. Defaults to 4 for csa and 128 for hca.",
+    )
     parser.add_argument("--invalid-fraction", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--warmup", type=int, default=5)
