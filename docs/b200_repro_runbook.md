@@ -257,6 +257,7 @@ Useful follow-up probe outputs:
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_probe_20260531-222233
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_shape_probe_20260531-223352
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_tileir_dump_20260531-222844
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/cutile_official_probe_20260531-224746
 ```
 
 The cuTile probe covered these combinations:
@@ -284,3 +285,47 @@ fused cuTile, but the current `radixark/miles:deepseek-v4` runtime cannot run a
 meaningful NVIDIA fused cuTile mHC benchmark. Use NVIDIA native only as a
 reference/fallback baseline unless NVIDIA provides the exact cuTile/tileiras
 runtime expected by this Megatron commit.
+
+Official `NVIDIA/cutile-python` sample baseline in the same container:
+
+```bash
+python3 -m pip install --target /tmp/cutile_official "cuda-tile[tileiras]==1.4.0" pytest numpy
+export PATH=/tmp/cutile_official/nvidia/cu13/bin:/tmp/cutile_official/nvidia/cu13/nvvm/bin:${PATH}
+export PYTHONPATH=/tmp/cutile_official:${PYTHONPATH}
+git clone --depth 1 https://github.com/NVIDIA/cutile-python.git /tmp/cutile-python
+cd /tmp/cutile-python
+python3 samples/MatMul.py --correctness-check
+python3 samples/BatchMatMul.py --correctness-check
+python3 samples/AttentionFMHA.py --correctness-check
+python3 -m pytest -q samples/test_samples.py
+```
+
+Observed environment:
+
+```text
+container CUDA:      12.9.1
+torch:               2.9.1+cu129
+temporary cuTile:    cuda-tile==1.4.0
+temporary tileiras:  nvidia-cuda-tileiras==13.3.36
+temporary nvcc/nvvm: nvidia-cuda-nvcc==13.3.33, nvidia-nvvm==13.3.33
+driver:              595.58.03
+GPU:                 B200, sm_100
+```
+
+All official cuTile commands above failed with:
+
+```text
+TileCompilerExecutionError: Return code 5
+failed to compile Tile IR program
+Unknown location
+```
+
+They also printed:
+
+```text
+Failed to detect the maximum supported TileIR bytecode version; falling back to 13.1.
+```
+
+So the current cuTile failure is not isolated to Megatron mHC. Resolve the
+official cuTile sample failure first, likely by changing the container/compiler
+stack or using NVIDIA's known-good cuTile runtime for this driver/GPU.

@@ -183,6 +183,7 @@ Probe outputs:
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_probe_20260531-222233
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_shape_probe_20260531-223352
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_tileir_dump_20260531-222844
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/cutile_official_probe_20260531-224746
 ```
 
 Runtime combinations tested:
@@ -217,6 +218,75 @@ not a public feature.
 This means the current blocker is no longer just a missing `tileiras` binary.
 `tileiras` is invoked successfully, but rejects the generated Tile IR bytecode
 for non-toy mHC specializations on `sm_100`.
+
+### Official cuTile Sample Probe
+
+To separate Megatron mHC issues from a general cuTile runtime problem, we also
+ran the upstream `NVIDIA/cutile-python` samples in the same B200 allocation and
+container.
+
+Environment:
+
+```text
+Node:                umbriel-b200-044
+GPU:                 NVIDIA B200, compute capability 10.0
+Driver:              595.58.03
+Container image:     radixark/miles:deepseek-v4
+Container CUDA:      12.9.1
+Torch:               2.9.1+cu129
+Temporary cuTile:    cuda-tile==1.4.0
+Temporary compiler:  cuda-toolkit==13.3.0
+tileiras:            nvidia-cuda-tileiras==13.3.36
+nvcc/nvvm:           nvidia-cuda-nvcc==13.3.33, nvidia-nvvm==13.3.33
+```
+
+Commands exercised:
+
+```text
+python3 samples/MatMul.py --correctness-check
+python3 samples/BatchMatMul.py --correctness-check
+python3 samples/AttentionFMHA.py --correctness-check
+python3 -m pytest -q samples/test_samples.py
+```
+
+Result:
+
+| Upstream cuTile command | Result | Failure |
+| --- | --- | --- |
+| `samples/MatMul.py --correctness-check` | fail | `tileiras ... --gpu-name sm_100` returns code 5 |
+| `samples/BatchMatMul.py --correctness-check` | fail | same Tile IR compile failure |
+| `samples/AttentionFMHA.py --correctness-check` | fail | same Tile IR compile failure |
+| `pytest samples/test_samples.py` | fail | 9 sample tests failed, including vector add, matmul, FMHA, LayerNorm, MoE |
+
+Common warning before sample failures:
+
+```text
+Failed to detect the maximum supported TileIR bytecode version; falling back to
+13.1.
+```
+
+The upstream `cuda.tile._compile` code attempts to detect supported bytecode by
+probing `tileiras` with `--gpu-name sm_120` across bytecode versions 13.3,
+13.2, and 13.1. In this environment that detection fails and cuTile falls back
+to bytecode 13.1. The subsequent real sample compiles are for `--gpu-name
+sm_100`, but still fail with `TileCompilerExecutionError`.
+
+This makes the current cuTile blocker broader than Megatron mHC. The official
+cuTile samples do not compile in this container/runtime combination either.
+
+`CUDA_TILE_ENABLE_CRASH_DUMP=1` was also tested on the Megatron mHC failure
+cases. It did not produce a zip archive because cuTile 1.4.0 hit a Python-side
+dump bug:
+
+```text
+AttributeError: 'Block' object has no attribute 'body'
+```
+
+The failing bytecode files were still left under:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/cutile_official_probe_20260531-224746/mhc_crash_tmp
+```
 
 ### Performance Snapshot
 
@@ -266,6 +336,9 @@ Current readiness view:
   modular, but it is not ready in the tested runtime. A few toy specializations
   compile, but the mHC-relevant shapes needed for comparison fail during Tile
   IR compilation.
+- Official upstream cuTile samples also fail in the same runtime, so the next
+  debugging step should focus on the cuTile/`tileiras`/driver/container
+  compatibility stack before spending more time on Megatron mHC code shape.
 - NVIDIA native is useful as a local reference and fallback, not as the likely
   performance target.
 - The next fair comparison should either use NVIDIA's exact cuTile/tileiras
