@@ -141,6 +141,34 @@ Observed directionally:
 - Numerical parity was previously checked on small D=512/H=64 SWA/CSA/HCA
   cases; this table is a perf snapshot, not a full end-to-end training proof.
 
+### Train-Like Batch Scaling Addendum
+
+The initial batch-scaling probe included decode shapes because they were already
+covered by the forward/inference matrix. For training readiness, the more
+relevant view is prefill-like fwd+bwd. That follow-up ran on `agent-evelyn:2.2`
+using the new B200 allocation:
+
+```text
+Node:       umbriel-b200-074
+Backend:    NVIDIA DSA
+Mode:       forward + backward
+Container:  radixark/miles:deepseek-v4
+cuDNN FE:   nvidia-cudnn-frontend[cutedsl]==1.24.0
+Run output: /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/dsa_train_batch_scaling_20260601-192845
+```
+
+| Case | B=1 fwd+bwd ms | B=2 | B=4 | B=8 | Throughput scale at B=8 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `swa_prefill_128_bwd`, `S=128,S_raw=512,TopK=128` | 0.8201 | 0.6718 | 0.6630 | 1.0213 | 6.42x |
+| `csa_prefill_128_bwd`, `S=128,S_raw=512,TopK=640` | 1.1562 | 1.0760 | 0.8554 | 1.4253 | 6.49x |
+| `hca_prefill_256_bwd`, `S=256,S_raw=256,TopK=130` | 0.6901 | 0.7092 | 1.0778 | 1.8005 | 3.07x |
+
+Read: for SWA/CSA `S=128`, DSA gains substantial throughput from batching up to
+`B=8`; latency is nearly flat or even lower through `B=4`, then rises at `B=8`.
+For HCA `S=256`, throughput still improves with batch, but less dramatically.
+So `B=1` understated training-like DSA scaling, especially for the `S=128`
+prefill-like cases.
+
 ## Current Interpretation
 
 For the blue module, SWA/CSA/HCA are not separate attention kernels in the

@@ -178,6 +178,29 @@ python3 -m dsv4_kernel_bench.bench_matrix \
 For backward perf, upgrade cuDNN Frontend first, then use
 `configs/blue_module_perf_backward.json` and the same backend-swap pattern.
 
+For train-like batch scaling, use prefill-like fwd+bwd shapes rather than the
+decode matrix. The latest run used `B=1,2,4,8` on:
+
+```text
+swa_prefill_128_bwd: S=128, S_raw=512, TopK=128
+csa_prefill_128_bwd: S=128, S_raw=512, TopK=640
+hca_prefill_256_bwd: S=256, S_raw=256, TopK=130
+```
+
+Run output:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/dsa_train_batch_scaling_20260601-192845
+```
+
+NVIDIA DSA fwd+bwd summary:
+
+| Case | B=1 ms | B=2 ms | B=4 ms | B=8 ms | Throughput scale at B=8 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `swa_prefill_128_bwd` | 0.8201 | 0.6718 | 0.6630 | 1.0213 | 6.42x |
+| `csa_prefill_128_bwd` | 1.1562 | 1.0760 | 0.8554 | 1.4253 | 6.49x |
+| `hca_prefill_256_bwd` | 0.6901 | 0.7092 | 1.0778 | 1.8005 | 3.07x |
+
 ## Known Results
 
 Shape:
