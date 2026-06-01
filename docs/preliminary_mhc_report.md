@@ -354,34 +354,55 @@ not proof that Megatron's fused mHC kernels are intrinsically broken.
 
 ### Correctness Status
 
-Current correctness evidence is per-backend, not yet a full cross-container
-Miles-vs-cuTile parity proof:
+Current correctness evidence now has both per-backend checks and a first
+cross-container Miles-vs-cuTile parity harness:
 
 | Backend | Evidence today | What it proves |
 | --- | --- | --- |
 | Miles TileKernels | Imports and runs fwd+bwd smoke in `radixark/miles:deepseek-v4` after a no-deps `tile-kernels` install | The Miles mHC path is runnable and differentiable in its native container |
 | NVIDIA fused cuTile | Official cuTile samples pass in CUDA13 SGLang; fused mHC custom fwd+bwd probes pass; Megatron fused mHC pytest reports `22 passed` | The cuTile stack and fused mHC kernels are correct against local PyTorch/Megatron references in the CUDA13 container |
 
-What is not proven yet:
+Cross-container run:
 
 ```text
-same tensors -> Miles TileKernels outputs/gradients == NVIDIA fused cuTile outputs/gradients
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cross_parity_20260601-064125
 ```
 
-The reason is practical: Miles runs in the CUDA12.9 Miles image, while NVIDIA
-fused cuTile currently needs the CUDA13 SGLang image. The right next check is a
-cross-container parity harness:
+The harness used one deterministic host input bundle, ran Miles in
+`radixark/miles:deepseek-v4` on pane `agent-evelyn:2.1`, ran NVIDIA fused
+cuTile in `lmsysorg/sglang:v0.5.11` on pane `agent-evelyn:2.2`, then compared
+CPU fp32 dumps.
 
-1. Generate one deterministic input bundle on the host.
-2. Run Miles in the Miles container and dump `layer_input`, `post_output`, and
-   gradients to the host.
-3. Run NVIDIA fused cuTile in the CUDA13 SGLang container on the same tensors,
-   with bias disabled to match the Miles raw `mhc_post` surface.
-4. Compare CPU-side fp32 metrics: `max_abs`, `rel_l2`, and gradient cosine
-   similarity.
+High-signal results:
 
-Until this is done, the cross-container perf table below is directional, not a
-correctness-certified apples-to-apples result.
+| Case | Tensor | Result |
+| --- | --- | --- |
+| `S=2,B=4,n=4,C=1024` | `layer_input` | close: cosine `0.9999907`, rel-L2 `0.00433` |
+| `S=2,B=4,n=4,C=1024` | `post`, `comb` | close: post cosine `0.9999979`, comb cosine `0.9999963` |
+| `S=2,B=4,n=4,C=1024` | `post_output` | mismatch: cosine `0.8817`, rel-L2 `0.4869` |
+| `S=64,B=1,n=4,C=7168` | `layer_input` | close: cosine `0.9999925`, rel-L2 `0.00388` |
+| `S=64,B=1,n=4,C=7168` | `post` | close: cosine `0.9999979`, rel-L2 `0.00204` |
+| `S=64,B=1,n=4,C=7168` | `post_output` | mismatch: cosine `0.9018`, rel-L2 `0.4449` |
+
+The mismatch appears to be a semantic surface mismatch in `mhc_post` / `h_res`
+orientation rather than a random correctness failure. Using the saved tensors:
+
+| Backend actual output | Formula that matches | Rel-L2 range |
+| --- | --- | ---: |
+| Miles `mhc_post` | `comb.T @ orig_res + post * layer_out` | `0.00233` to `0.00234` |
+| NVIDIA `fused_h_post_bda` | `comb @ orig_res + post * layer_out` | `0.00308` to `0.00347` |
+
+Megatron's local reference explicitly defines fused post as:
+
+```text
+output = h_res @ original_residual + h_post * x
+```
+
+So the next correctness step is to align the adapter convention: either pass
+`h_res.transpose(-1, -2)` into NVIDIA when treating Miles as reference, or
+confirm that the upstream callers intentionally store opposite orientations.
+Until that is resolved, fwd/bwd parity is not proven even though both kernels
+run and their pre/weight/post scalar pieces mostly agree.
 
 ### CUDA12.9 Miles-Container Performance Snapshot
 
@@ -415,21 +436,34 @@ NVIDIA fused cuTile:
 | `S=64,B=1,n=4,C=7168` | 0.2727 | 0.8140 | pass |
 | `S=256,B=1,n=4,C=7168` | 0.3091 | 1.0531 | pass |
 
-Provisional Miles CUDA12.9 vs NVIDIA fused CUDA13 comparison:
+Cross-container no-bias Miles CUDA12.9 vs NVIDIA fused CUDA13 comparison:
+
+Run output:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cross_perf_20260601-065713
+```
+
+The two containers were run concurrently on the same B200 node:
+
+```text
+Miles:       radixark/miles:deepseek-v4, Torch 2.9.1+cu129, GPU0
+NVIDIA:      lmsysorg/sglang:v0.5.11, Torch 2.11.0+cu130, GPU1
+warmup/iters: 5 / 20
+bias:        disabled on NVIDIA fused post to match the raw Miles surface
+```
 
 | Case | Miles TileKernels fwd ms | NVIDIA fused fwd ms | Miles TileKernels fwd+bwd ms | NVIDIA fused fwd+bwd ms | Read |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `S=2,B=4,n=4,C=1024` | 0.1103 | 0.1555 | 1.3878 | 0.7900 | Miles faster forward; NVIDIA fused faster with backward |
-| `S=64,B=1,n=4,C=7168` | 0.1591 | 0.2727 | 1.3818 | 0.8140 | Same pattern |
+| `S=2,B=4,n=4,C=1024` | 0.1870 | 0.1686 | 1.2124 | 0.6516 | NVIDIA slightly faster forward and much faster fwd+bwd |
+| `S=64,B=1,n=4,C=7168` | 0.1967 | 0.2741 | 1.1861 | 0.6645 | Miles faster forward; NVIDIA faster fwd+bwd |
+| `S=256,B=1,n=4,C=7168` | 0.1909 | 0.3067 | 1.2095 | 0.6767 | Miles faster forward; NVIDIA faster fwd+bwd |
 
-This second table is not a strict apples-to-apples benchmark because the Miles
-numbers came from `radixark/miles:deepseek-v4` with CUDA 12.9/Torch cu129,
-while the NVIDIA fused numbers came from `lmsysorg/sglang:v0.5.11` with CUDA
-13.0/Torch cu130. The temporary NVIDIA fused pipeline also included a bias term
-while the Miles raw `mhc_post` surface did not, so exact parity/perf needs the
-cross-container harness described above with bias disabled or matched. The
-table is useful directionally: NVIDIA fused cuTile looks ready enough to
-benchmark seriously, especially for training fwd+bwd.
+This is a better comparison than the earlier table because the NVIDIA bias term
+is disabled and both runs use the same shape list and timing loop. It is still
+not a same-image benchmark, and the post orientation mismatch above means this
+is a native-surface performance comparison rather than a correctness-certified
+drop-in replacement result.
 
 Miles TileKernels was also attempted in the CUDA13 SGLang image. After adding
 `z3-solver`, `tilelang`, and `tile-kernels`, imports succeeded:
@@ -460,14 +494,14 @@ Current readiness view:
 - NVIDIA fused cuTile mHC should be evaluated in the CUDA13 SGLang stack. In
   that runtime, upstream cuTile samples pass, Megatron fused mHC forward smokes
   pass, local fwd+bwd parity smokes pass, and Megatron's fused mHC pytest passes.
-- The provisional cross-container comparison suggests Miles TileKernels is
-  still faster for forward-only, while NVIDIA fused cuTile is faster for
-  forward+backward on the two shared shapes. Treat this as directional until
-  both paths run in the same image.
+- The two-container comparison suggests Miles TileKernels is generally faster
+  for larger forward-only shapes, while NVIDIA fused cuTile is materially faster
+  for forward+backward on all tested shapes. Treat this as native-surface
+  performance until the `mhc_post` orientation convention is aligned.
 - The CUDA12.9 Miles-container failure should be recorded as a container/compiler
   compatibility issue. It should not block a fair NVIDIA fused cuTile perf
   comparison if the benchmark can be run in `lmsysorg/sglang:v0.5.11` or the
   intended `sglang_dev` CUDA13 image.
-- Next experiment: fix the SGLang TileLang lowering issue or build a shared
-  image. Until then, use Miles CUDA12.9 numbers as the Miles baseline and use
-  CUDA13 SGLang for NVIDIA fused cuTile readiness/perf.
+- Next experiment: align `h_res` orientation in the adapter and rerun the same
+  cross-container parity harness. After that, fix the SGLang TileLang lowering
+  issue or build a shared image for a same-runtime benchmark.

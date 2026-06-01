@@ -457,16 +457,46 @@ NVIDIA fused cuTile:
   tests/unit_tests/fusions/test_fused_mhc_kernels.py -k Fused: 22 passed
 ```
 
-The missing strict check is cross-container parity on the exact same tensors:
+The first strict cross-container check now exists:
 
 ```text
-same host input bundle
-  -> Miles container dumps layer_input/post_output/grads
-  -> SGLang container dumps fused cuTile layer_input/post_output/grads
-  -> CPU compare max_abs, rel_l2, and gradient cosine
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cross_parity_20260601-064125
 ```
 
-For that check, disable or match bias. The temporary CUDA13 perf probe included
-a bias term on the NVIDIA fused path, while the Miles raw `mhc_post` surface did
-not, so the existing cross-container perf comparison should be treated as
-directional until this parity harness is added.
+It uses the exact same host input bundle for both containers:
+
+```text
+pane 2.1: radixark/miles:deepseek-v4
+pane 2.2: lmsysorg/sglang:v0.5.11
+```
+
+The pre path is close across containers: `layer_input` cosine is above
+`0.99999` on both tested shapes. The post scalars also match closely. The full
+`post_output` does not match yet because the two public surfaces appear to use
+opposite residual-mixing orientation:
+
+```text
+Miles mhc_post:        comb.T @ orig_res + post * layer_out
+NVIDIA fused_h_post:   comb   @ orig_res + post * layer_out
+```
+
+So the next correctness rerun should transpose `h_res` in the NVIDIA adapter
+when Miles is the reference, or confirm the intended caller-side convention.
+
+The current no-bias cross-container performance run is:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cross_perf_20260601-065713
+```
+
+Summary:
+
+| Case | Miles fwd ms | NVIDIA cuTile fwd ms | Miles fwd+bwd ms | NVIDIA cuTile fwd+bwd ms |
+| --- | ---: | ---: | ---: | ---: |
+| `S=2,B=4,n=4,C=1024` | 0.1870 | 0.1686 | 1.2124 | 0.6516 |
+| `S=64,B=1,n=4,C=7168` | 0.1967 | 0.2741 | 1.1861 | 0.6645 |
+| `S=256,B=1,n=4,C=7168` | 0.1909 | 0.3067 | 1.2095 | 0.6767 |
+
+Interpretation: Miles is faster on larger forward-only shapes; NVIDIA fused
+cuTile is faster for fwd+bwd. This is still native-surface perf until the post
+orientation convention is aligned.
