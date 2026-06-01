@@ -282,9 +282,9 @@ FAIL: proj_rms even at M=1, N=1, K=128 forward compile
 
 So for mHC, the fair target remains Miles TileKernels/TileLang versus NVIDIA
 fused cuTile, but the current `radixark/miles:deepseek-v4` runtime cannot run a
-meaningful NVIDIA fused cuTile mHC benchmark. Use NVIDIA native only as a
-reference/fallback baseline unless NVIDIA provides the exact cuTile/tileiras
-runtime expected by this Megatron commit.
+meaningful NVIDIA fused cuTile mHC benchmark. Megatron native is only useful as
+a local correctness/reference path for NVIDIA fused cuTile; it is not a target
+performance backend.
 
 Official `NVIDIA/cutile-python` sample baseline in the same container:
 
@@ -423,13 +423,13 @@ Use this CUDA13 SGLang path for the next NVIDIA fused cuTile mHC performance
 comparison. Keep the CUDA12.9 Miles image for Miles TileKernels baselines unless
 Miles TileKernels can be made to import cleanly in the same SGLang image.
 
-Observed NVIDIA mHC perf in the CUDA13 SGLang image:
+Observed NVIDIA fused cuTile mHC perf in the CUDA13 SGLang image:
 
-| Case | Native fwd ms | Fused fwd ms | Native fwd+bwd ms | Fused fwd+bwd ms |
-| --- | ---: | ---: | ---: | ---: |
-| `S=2,B=4,n=4,C=1024` | 0.2876 | 0.1555 | 2.2218 | 0.7900 |
-| `S=64,B=1,n=4,C=7168` | 0.3703 | 0.2727 | 1.9659 | 0.8140 |
-| `S=256,B=1,n=4,C=7168` | 0.4030 | 0.3091 | 2.5182 | 1.0531 |
+| Case | Fused fwd ms | Fused fwd+bwd ms |
+| --- | ---: | ---: |
+| `S=2,B=4,n=4,C=1024` | 0.1555 | 0.7900 |
+| `S=64,B=1,n=4,C=7168` | 0.2727 | 0.8140 |
+| `S=256,B=1,n=4,C=7168` | 0.3091 | 1.0531 |
 
 Miles TileKernels in the CUDA13 SGLang image imports after installing
 `z3-solver`, but kernel lowering fails at runtime:
@@ -444,3 +444,29 @@ So the current clean split is:
 Miles TileKernels mHC baseline:       radixark/miles:deepseek-v4
 NVIDIA fused cuTile mHC baseline:     lmsysorg/sglang:v0.5.11
 ```
+
+The current correctness evidence is per-backend:
+
+```text
+Miles TileKernels:
+  runs fwd+bwd smoke in radixark/miles:deepseek-v4
+
+NVIDIA fused cuTile:
+  upstream cuTile samples pass in CUDA13 SGLang
+  Megatron fused mHC custom fwd+bwd probes pass
+  tests/unit_tests/fusions/test_fused_mhc_kernels.py -k Fused: 22 passed
+```
+
+The missing strict check is cross-container parity on the exact same tensors:
+
+```text
+same host input bundle
+  -> Miles container dumps layer_input/post_output/grads
+  -> SGLang container dumps fused cuTile layer_input/post_output/grads
+  -> CPU compare max_abs, rel_l2, and gradient cosine
+```
+
+For that check, disable or match bias. The temporary CUDA13 perf probe included
+a bias term on the NVIDIA fused path, while the Miles raw `mhc_post` surface did
+not, so the existing cross-container perf comparison should be treated as
+directional until this parity harness is added.

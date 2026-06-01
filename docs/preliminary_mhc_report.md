@@ -87,10 +87,10 @@ NVIDIA Megatron:
 The first B200 experiment is intentionally narrow:
 
 1. Confirm the runtime can import Miles mHC and NVIDIA mHC dependencies.
-2. Run NVIDIA fused cuTile kernels against Megatron native references for
-   correctness.
-3. Measure NVIDIA fused vs native reference latency for the mHC primitives and
-   a small end-to-end layer-boundary pipeline.
+2. Run Miles TileKernels and NVIDIA fused cuTile mHC kernels on small and
+   model-like layer-boundary shapes.
+3. Use local PyTorch/Megatron reference code only to sanity-check NVIDIA fused
+   cuTile correctness, not as a performance backend.
 4. Run Miles TileKernels mHC only if `tile_kernels` is available without
    breaking the current Miles/TransformerEngine container stack.
 
@@ -150,7 +150,7 @@ Run output:         /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_20260531
 | --- | --- | --- |
 | Miles base image | fail | `tile_kernels` missing |
 | Miles + `tile-kernels==1.0.0 --no-deps` | pass | wrapper imports; fwd+bwd smoke passes on `B=1,S=8,n=4,C=1024` |
-| NVIDIA native Megatron mHC | pass | native reference path runs and benchmarks |
+| NVIDIA native Megatron mHC | pass | reference/sanity path only; not a target backend |
 | NVIDIA fused cuTile mHC | partial/fail | imports and finds `tileiras`; toy kernels compile, but useful mHC shapes hit Tile IR compilation failures |
 
 Miles smoke output:
@@ -352,46 +352,54 @@ This means the previous cuTile failure was a runtime-stack compatibility issue
 in `radixark/miles:deepseek-v4` with CUDA 12.9/Torch cu129 plus overlay cuTile,
 not proof that Megatron's fused mHC kernels are intrinsically broken.
 
+### Correctness Status
+
+Current correctness evidence is per-backend, not yet a full cross-container
+Miles-vs-cuTile parity proof:
+
+| Backend | Evidence today | What it proves |
+| --- | --- | --- |
+| Miles TileKernels | Imports and runs fwd+bwd smoke in `radixark/miles:deepseek-v4` after a no-deps `tile-kernels` install | The Miles mHC path is runnable and differentiable in its native container |
+| NVIDIA fused cuTile | Official cuTile samples pass in CUDA13 SGLang; fused mHC custom fwd+bwd probes pass; Megatron fused mHC pytest reports `22 passed` | The cuTile stack and fused mHC kernels are correct against local PyTorch/Megatron references in the CUDA13 container |
+
+What is not proven yet:
+
+```text
+same tensors -> Miles TileKernels outputs/gradients == NVIDIA fused cuTile outputs/gradients
+```
+
+The reason is practical: Miles runs in the CUDA12.9 Miles image, while NVIDIA
+fused cuTile currently needs the CUDA13 SGLang image. The right next check is a
+cross-container parity harness:
+
+1. Generate one deterministic input bundle on the host.
+2. Run Miles in the Miles container and dump `layer_input`, `post_output`, and
+   gradients to the host.
+3. Run NVIDIA fused cuTile in the CUDA13 SGLang container on the same tensors,
+   with bias disabled to match the Miles raw `mhc_post` surface.
+4. Compare CPU-side fp32 metrics: `max_abs`, `rel_l2`, and gradient cosine
+   similarity.
+
+Until this is done, the cross-container perf table below is directional, not a
+correctness-certified apples-to-apples result.
+
 ### CUDA12.9 Miles-Container Performance Snapshot
 
-The most comparable row is the layer-boundary pre/post pipeline. It is still
-not byte-identical across implementations:
-
-- Miles measures `hc_pre_raw + hc_post_raw` through TileKernels.
-- NVIDIA native measures `proj_rms + compute_h + sinkhorn + aggregate +
-  h_post_bda` through Megatron native functions.
-- NVIDIA fused should be the intended comparison backend, but it does not
-  compile in this container/runtime combination yet.
+This is the Miles-side baseline. NVIDIA fused cuTile is listed only as
+unavailable in this CUDA12.9 container/runtime combination.
 
 | Case | Backend | Mode | Avg ms | Status |
 | --- | --- | --- | ---: | --- |
 | `S=2,B=4,n=4,C=1024` | Miles TileKernels no-deps | forward | 0.1103 | pass |
-| `S=2,B=4,n=4,C=1024` | NVIDIA native | forward | 0.3897 | pass |
 | `S=2,B=4,n=4,C=1024` | Miles TileKernels no-deps | fwd+bwd | 1.3878 | pass |
-| `S=2,B=4,n=4,C=1024` | NVIDIA native | fwd+bwd | 2.4783 | pass |
 | `S=64,B=1,n=4,C=7168` | Miles TileKernels no-deps | forward | 0.1591 | pass |
-| `S=64,B=1,n=4,C=7168` | NVIDIA native | forward | 1.0166 | pass |
 | `S=64,B=1,n=4,C=7168` | Miles TileKernels no-deps | fwd+bwd | 1.3818 | pass |
-| `S=64,B=1,n=4,C=7168` | NVIDIA native | fwd+bwd | 5.7900 | pass |
 | both cases | NVIDIA fused cuTile | forward/fwd+bwd | n/a | Tile IR compile fail |
-
-NVIDIA native primitive timings, for context:
-
-| Case | Primitive | Forward ms | Fwd+Bwd ms |
-| --- | --- | ---: | ---: |
-| `S=2,B=4,n=4,C=1024` | `sinkhorn` | 0.1197 | 0.8945 |
-| `S=2,B=4,n=4,C=1024` | `h_aggregate` | 0.0581 | 0.3454 |
-| `S=2,B=4,n=4,C=1024` | `h_post_bda` | 0.0762 | 0.5645 |
-| `S=2,B=4,n=4,C=1024` | `proj_rms` | 0.0794 | 0.5394 |
-| `S=64,B=1,n=4,C=7168` | `sinkhorn` | 0.2713 | 3.8431 |
-| `S=64,B=1,n=4,C=7168` | `h_aggregate` | 0.0712 | 0.5041 |
-| `S=64,B=1,n=4,C=7168` | `h_post_bda` | 0.0947 | 0.7207 |
-| `S=64,B=1,n=4,C=7168` | `proj_rms` | 0.1046 | 0.5853 |
 
 ### CUDA13 SGLang Performance Snapshot
 
 After moving to the CUDA13 SGLang stack, NVIDIA fused cuTile mHC runs on
-meaningful shapes and is consistently faster than NVIDIA native.
+meaningful shapes.
 
 Run output:
 
@@ -399,13 +407,13 @@ Run output:
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_perf_probe_20260531-232024/mhc_perf_results.json
 ```
 
-NVIDIA native vs NVIDIA fused cuTile:
+NVIDIA fused cuTile:
 
-| Case | Native fwd ms | Fused fwd ms | Fwd speedup | Native fwd+bwd ms | Fused fwd+bwd ms | Fwd+bwd speedup |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `S=2,B=4,n=4,C=1024` | 0.2876 | 0.1555 | 1.85x | 2.2218 | 0.7900 | 2.81x |
-| `S=64,B=1,n=4,C=7168` | 0.3703 | 0.2727 | 1.36x | 1.9659 | 0.8140 | 2.42x |
-| `S=256,B=1,n=4,C=7168` | 0.4030 | 0.3091 | 1.30x | 2.5182 | 1.0531 | 2.39x |
+| Case | Fused fwd ms | Fused fwd+bwd ms | Status |
+| --- | ---: | ---: | --- |
+| `S=2,B=4,n=4,C=1024` | 0.1555 | 0.7900 | pass |
+| `S=64,B=1,n=4,C=7168` | 0.2727 | 0.8140 | pass |
+| `S=256,B=1,n=4,C=7168` | 0.3091 | 1.0531 | pass |
 
 Provisional Miles CUDA12.9 vs NVIDIA fused CUDA13 comparison:
 
@@ -417,8 +425,11 @@ Provisional Miles CUDA12.9 vs NVIDIA fused CUDA13 comparison:
 This second table is not a strict apples-to-apples benchmark because the Miles
 numbers came from `radixark/miles:deepseek-v4` with CUDA 12.9/Torch cu129,
 while the NVIDIA fused numbers came from `lmsysorg/sglang:v0.5.11` with CUDA
-13.0/Torch cu130. It is still useful directionally: NVIDIA fused cuTile looks
-ready enough to benchmark seriously, especially for training fwd+bwd.
+13.0/Torch cu130. The temporary NVIDIA fused pipeline also included a bias term
+while the Miles raw `mhc_post` surface did not, so exact parity/perf needs the
+cross-container harness described above with bias disabled or matched. The
+table is useful directionally: NVIDIA fused cuTile looks ready enough to
+benchmark seriously, especially for training fwd+bwd.
 
 Miles TileKernels was also attempted in the CUDA13 SGLang image. After adding
 `z3-solver`, `tilelang`, and `tile-kernels`, imports succeeded:
@@ -444,16 +455,11 @@ Current readiness view:
 
 - In the Miles CUDA12.9 container, Miles TileKernels remains the stronger
   runnable path. It needs a no-dependency `tile-kernels` install, but after
-  that it imports, runs forward/backward, and is faster than NVIDIA native on
-  the tested pre/post pipeline shapes.
-- NVIDIA native is useful as a local reference and fallback, not as the likely
-  performance target.
+  that it imports and runs forward/backward on the tested pre/post pipeline
+  shapes.
 - NVIDIA fused cuTile mHC should be evaluated in the CUDA13 SGLang stack. In
   that runtime, upstream cuTile samples pass, Megatron fused mHC forward smokes
   pass, local fwd+bwd parity smokes pass, and Megatron's fused mHC pytest passes.
-- In CUDA13 SGLang, NVIDIA fused cuTile is faster than NVIDIA native on the
-  tested layer-boundary pipeline shapes: about 1.3-1.9x faster forward and
-  about 2.4-2.8x faster forward+backward.
 - The provisional cross-container comparison suggests Miles TileKernels is
   still faster for forward-only, while NVIDIA fused cuTile is faster for
   forward+backward on the two shared shapes. Treat this as directional until
