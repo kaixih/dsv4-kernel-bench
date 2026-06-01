@@ -1,14 +1,17 @@
 # DSv4 Kernel Bench
 
-Small harness for comparing DeepSeek-V4 sparse attention kernel paths.
+Small harness for comparing DeepSeek-V4 hybrid-attention kernel paths.
 
-The first target is sparse MLA / DSA attention:
+The first target is the selected-KV sparse-attention consumer:
 
 - reference backend: Miles TileLang `sparse_attn_tilelang`
 - comparison backend: NVIDIA Megatron `dsa_sparse_attn`
 
-The harness uses one canonical input layout and keeps backend-specific layout
-conversion inside adapters.
+This is the kernel after the KV pool and per-query selected KV indices already
+exist. For CSA, those selected ids include compressed-KV top-k; for SWA/HCA
+they can be deterministic local/all-visible compressed ids. The harness uses
+one canonical input layout and keeps backend-specific layout conversion inside
+adapters.
 
 ## Quick Start
 
@@ -21,13 +24,13 @@ python -m dsv4_kernel_bench.bench --backend miles_tilelang --device cuda --outpu
 If optional runtime dependencies are missing, backend tests skip with a clear
 reason. The index conversion tests run without GPU dependencies.
 
-## Canonical Sparse Attention Inputs
+## Canonical Selected-KV Attention Inputs
 
 ```python
 q: [B, S, H, D] bf16
-kv: [B, S_kv, D] bf16
+kv: [B, S_kv, D] bf16  # raw KV plus optional compressed KV
 attn_sink: [H] fp32
-topk_idxs: [B, S, TopK] int32  # -1 means invalid
+topk_idxs: [B, S, TopK] int32  # indices into kv; -1 means invalid
 sm_scale: float | None
 ```
 
