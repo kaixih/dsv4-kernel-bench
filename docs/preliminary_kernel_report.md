@@ -101,6 +101,46 @@ To compare NVIDIA, copy a config and change `defaults.backend` to
 `nvidia_dsa`. The output `summary.json` keeps pass/skip/fail status for every
 case, including exact backend import errors.
 
+## B200 Perf Snapshot
+
+Run context:
+
+```text
+Node: umbriel-b200-044, 8x NVIDIA B200
+Repo commit: 460e019d0b879c3d9a2329c1c56a743c81a8d21f
+Container: radixark/miles:deepseek-v4
+NVIDIA DSA backward dependency: nvidia-cudnn-frontend[cutedsl]==1.24.0
+Run output: /tmp/dsv4-kernel-bench-runs/perf_compare_20260601-042600/perf_compare_summary.json
+```
+
+Important benchmark caveat: these results measure the selected-KV sparse
+attention consumer with synthetic selected ids. They do not include real
+compressor, real indexer scoring, or real top-k selection.
+
+Forward-only perf uses no-grad and reuses the same synthetic tensors across
+iterations. Backward perf clones per iteration so gradients do not accumulate.
+
+| Mode | Case | Shape | Selection | Miles ms | NVIDIA DSA ms | NVIDIA speedup |
+| --- | --- | --- | --- | ---: | ---: | ---: |
+| forward | `swa_decode_2k` | `B=1,S=1,S_raw=2048,H=64,D=512,TopK=128` | SWA window 128 | 0.3830 | 0.2108 | 1.82x |
+| forward | `csa_decode_2k` | `B=1,S=1,S_raw=2048,H=64,D=512,TopK=640` | raw window 128 + C4 topk 512 | 0.3704 | 0.2075 | 1.79x |
+| forward | `hca_decode_8k` | `B=1,S=1,S_raw=8192,H=64,D=512,TopK=192` | raw window 128 + all visible C128 | 0.3751 | 0.2058 | 1.82x |
+| forward | `csa_decode_8k` | `B=1,S=1,S_raw=8192,H=64,D=512,TopK=640` | raw window 128 + C4 topk 512 | 0.3834 | 0.2055 | 1.87x |
+| forward | `csa_prefill_256` | `B=1,S=256,S_raw=256,H=64,D=512,TopK=640` | raw window 128 + C4 topk 512 | 0.3814 | 0.2209 | 1.73x |
+| forward | `hca_prefill_256` | `B=1,S=256,S_raw=256,H=64,D=512,TopK=130` | raw window 128 + all visible C128 | 0.4077 | 0.2356 | 1.73x |
+| backward | `swa_prefill_128_bwd` | `B=1,S=128,S_raw=512,H=64,D=512,TopK=128` | SWA window 128 | 0.9843 | 0.8054 | 1.22x |
+| backward | `csa_prefill_128_bwd` | `B=1,S=128,S_raw=512,H=64,D=512,TopK=640` | raw window 128 + C4 topk 512 | 1.0735 | 0.8393 | 1.28x |
+| backward | `hca_prefill_256_bwd` | `B=1,S=256,S_raw=256,H=64,D=512,TopK=130` | raw window 128 + all visible C128 | 1.0612 | 0.6007 | 1.77x |
+
+Observed directionally:
+
+- NVIDIA DSA forward is about `1.7x-1.9x` faster than Miles TileLang for these
+  synthetic selected-KV shapes.
+- NVIDIA DSA backward is about `1.2x-1.8x` faster on the three prefill-like
+  backward shapes.
+- Numerical parity was previously checked on small D=512/H=64 SWA/CSA/HCA
+  cases; this table is a perf snapshot, not a full end-to-end training proof.
+
 ## Current Interpretation
 
 For the blue module, SWA/CSA/HCA are not separate attention kernels in the
