@@ -45,6 +45,22 @@ mHC decides how residual streams are mixed before and after the layer.
 | Runtime dependency | `tile_kernels` package | `cuda.tile` / cuTile in CUDA Python | Current Miles container lacks `tile_kernels`; NVIDIA imports in the same container |
 | Integration | Miles DeepSeek-V4 plugin `hyper_connection.py` | Megatron `HyperConnectionModule` integrated into transformer blocks/MTP | Both are integration-level, not just standalone kernels |
 
+Miles is not carrying the raw mHC kernel source directly in the Miles plugin.
+The Miles plugin delegates to the external `tile_kernels.modeling.mhc.ops`
+package. In this environment that path is the TileKernels/TileLang path:
+`tilelang==0.1.8` is present in the container, and `tile-kernels==1.0.0
+--no-deps` is enough to make the Miles wrapper import and run.
+
+NVIDIA has two mHC paths in the Megatron branch:
+
+- Native mHC is the PyTorch/Megatron reference fallback in
+  `megatron.core.transformer.hyper_connection`. It is useful for correctness
+  and availability, but it is not the intended performance comparison against
+  Miles TileLang kernels.
+- Fused cuTile mHC is the target NVIDIA kernel path in
+  `megatron.core.fusions.fused_mhc_kernels`. This is the path that should be
+  compared with Miles once it compiles in the runtime.
+
 ## Source Locations
 
 Known source snapshots used for the initial inspection:
@@ -135,7 +151,7 @@ Run output:         /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_20260531
 | Miles base image | fail | `tile_kernels` missing |
 | Miles + `tile-kernels==1.0.0 --no-deps` | pass | wrapper imports; fwd+bwd smoke passes on `B=1,S=8,n=4,C=1024` |
 | NVIDIA native Megatron mHC | pass | native reference path runs and benchmarks |
-| NVIDIA fused cuTile mHC | fail | imports and finds `tileiras`, but Tile IR compilation fails |
+| NVIDIA fused cuTile mHC | partial/fail | imports and finds `tileiras`; toy kernels compile, but useful mHC shapes hit Tile IR compilation failures |
 
 Miles smoke output:
 
@@ -155,8 +171,52 @@ failed to compile Tile IR program
 Unknown location
 ```
 
-This happens for all tested fused primitives: `sinkhorn`, `h_aggregate`,
-`h_post_bda`, `proj_rms`, and the end-to-end layer-boundary pipeline.
+### cuTile Compiler Probe
+
+The follow-up probe tested whether the failure was just a bad `cuda-tile` or
+`tileiras` wheel pairing. It was run in the existing `agent-evelyn:2.1` pane on
+`umbriel-b200-044`.
+
+Probe outputs:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_probe_20260531-222233
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_shape_probe_20260531-223352
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_tileir_dump_20260531-222844
+```
+
+Runtime combinations tested:
+
+| `cuda-tile` path | `tileiras` path | Result |
+| --- | --- | --- |
+| base `cuda-tile==1.3.0` | CUDA toolkit/tileiras `13.1.2.0` | tiny cases compile; useful shapes fail |
+| base `cuda-tile==1.3.0` | CUDA toolkit/tileiras `13.2.1` | all tested cases fail |
+| base `cuda-tile==1.3.0` | CUDA toolkit/tileiras `13.3.0` | all tested cases fail |
+| overlay `cuda-tile==1.2.0` | package extra tileiras | all tested cases fail |
+| overlay `cuda-tile==1.3.0` | package extra tileiras | all tested cases fail |
+| overlay `cuda-tile==1.4.0` | package extra tileiras | all tested cases fail |
+| overlay `cuda-tile==1.0.0/1.0.1/1.1.0` | CUDA toolkit/tileiras `13.1.2.0` | same shape pattern as base `1.3.0` |
+
+Shape-level result with `tileiras` available:
+
+| Fused cuTile primitive | Tiny/toy case | Useful case | Read |
+| --- | --- | --- | --- |
+| `sinkhorn` | `n=2,s*b=1` fwd+bwd passes | `n=4,s*b=8` fails in backward compile | compiler works only for the smallest specialization |
+| `h_aggregate` | `n=1/2,C=1,s*b=1` forward passes for bf16/fp32 | `n=2,C=256,s*b=1` forward compile fails | failure appears once channel tile is meaningful |
+| `h_post_bda` | `n=2,C=1,s*b=1` forward passes | `n=2,C=256,s*b=1` compile fails in the broader probe | toy pass does not exercise the real path |
+| `proj_rms` | none found | even `M=1,N=1,K=128` forward compile fails | blocks fused mHC pipeline immediately |
+
+`CUDA_TILE_DUMP_BYTECODE` produced `.tileirbc` bytecode for the failing kernels,
+but `CUDA_TILE_DUMP_TILEIR` could not emit readable MLIR in this wheel:
+
+```text
+Can't print MLIR because the internal extension is missing. This is currently
+not a public feature.
+```
+
+This means the current blocker is no longer just a missing `tileiras` binary.
+`tileiras` is invoked successfully, but rejects the generated Tile IR bytecode
+for non-toy mHC specializations on `sm_100`.
 
 ### Performance Snapshot
 
@@ -203,8 +263,9 @@ Current readiness view:
   forward/backward, and is faster than NVIDIA native on the tested pre/post
   pipeline shapes.
 - NVIDIA's fused cuTile implementation is architecturally attractive and more
-  modular, but it is not ready in the tested runtime: every fused primitive
-  reaches cuTile and then fails during Tile IR compilation.
+  modular, but it is not ready in the tested runtime. A few toy specializations
+  compile, but the mHC-relevant shapes needed for comparison fail during Tile
+  IR compilation.
 - NVIDIA native is useful as a local reference and fallback, not as the likely
   performance target.
 - The next fair comparison should either use NVIDIA's exact cuTile/tileiras

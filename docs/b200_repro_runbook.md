@@ -250,8 +250,37 @@ failed to compile Tile IR program
 Unknown location
 ```
 
-The preliminary mHC run output was:
+Useful follow-up probe outputs:
 
 ```text
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_20260531-220613/mhc_summary.json
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_probe_20260531-222233
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_cudatile_shape_probe_20260531-223352
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_tileir_dump_20260531-222844
 ```
+
+The cuTile probe covered these combinations:
+
+```text
+base cuda-tile 1.3.0 + tileiras 13.1/13.2/13.3
+overlay cuda-tile 1.2.0/1.3.0/1.4.0 with package extra tileiras
+overlay cuda-tile 1.0.0/1.0.1/1.1.0 + explicit tileiras 13.1
+```
+
+Observed shape pattern:
+
+```text
+PASS: sinkhorn n=2, s*b=1 fwd+bwd
+PASS: h_aggregate n=1/2, C=1, s*b=1 forward
+PASS: h_post_bda n=2, C=1, s*b=1 forward
+FAIL: sinkhorn n=4, s*b=8 backward compile
+FAIL: h_aggregate n=2, C=256 forward compile
+FAIL: h_post_bda n=2, C=256 forward compile
+FAIL: proj_rms even at M=1, N=1, K=128 forward compile
+```
+
+So for mHC, the fair target remains Miles TileKernels/TileLang versus NVIDIA
+fused cuTile, but the current `radixark/miles:deepseek-v4` runtime cannot run a
+meaningful NVIDIA fused cuTile mHC benchmark. Use NVIDIA native only as a
+reference/fallback baseline unless NVIDIA provides the exact cuTile/tileiras
+runtime expected by this Megatron commit.
