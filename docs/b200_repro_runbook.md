@@ -219,3 +219,39 @@ d_attn_sink: rel_l2=7.1851e-05, max_abs=4.14997e-05
   attention where `indexer_topk == 0`.
 - Keep benchmark JSON in `/tmp` if the mounted repo is not writable from the
   container.
+
+## mHC Notes
+
+The `radixark/miles:deepseek-v4` image does not include `tile_kernels` by
+default. Do not run a normal dependency install for `tile-kernels==1.0.0`; it
+upgrades Torch/CUDA packages and breaks the existing TransformerEngine wheel.
+Use a transient no-dependency target instead:
+
+```bash
+python3 -m pip install --target /tmp/tilekernels_nodeps --no-deps tile-kernels==1.0.0
+export PYTHONPATH=/tmp/tilekernels_nodeps:${PYTHONPATH}
+```
+
+NVIDIA Megatron fused mHC imports with `cuda.tile`, but actual cuTile kernel
+launch also needs `tileiras`:
+
+```bash
+python3 -m pip install --target /tmp/cuda_tileiras_pkg "cuda-tile[tileiras]"
+export PATH=/tmp/cuda_tileiras_pkg/nvidia/cu13/bin:${PATH}
+export PYTHONPATH=/tmp/cuda_tileiras_pkg:${PYTHONPATH}
+```
+
+On `umbriel-b200-044` with the source commits above, this made `tileiras`
+discoverable, but NVIDIA fused mHC still failed during Tile IR compilation:
+
+```text
+TileCompilerExecutionError: Return code 5
+failed to compile Tile IR program
+Unknown location
+```
+
+The preliminary mHC run output was:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/mhc_20260531-220613/mhc_summary.json
+```

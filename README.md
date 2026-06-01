@@ -51,5 +51,6 @@ sm_scale: float | None
 ```
 
 See `docs/kernel_surface_sparse_attention.md` for the surface notes,
-`docs/preliminary_kernel_report.md` for the first kernel comparison framing, and
+`docs/preliminary_kernel_report.md` for the selected-KV attention comparison,
+`docs/preliminary_mhc_report.md` for the mHC comparison, and
 `docs/b200_repro_runbook.md` for the B200 container reproduction flow.
