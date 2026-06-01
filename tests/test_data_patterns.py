@@ -41,8 +41,8 @@ def test_csa_pattern_appends_shifted_compressed_ids():
     # Raw KV length is 8, so compressed C0/C1 live at logical ids 8/9.
     assert inputs.kv.shape[1] == 10
     assert inputs.metadata["n_compressed"] == 2
-    torch.testing.assert_close(inputs.topk_idxs[0, 3], torch.tensor([2, 3, 8, -1]))
-    torch.testing.assert_close(inputs.topk_idxs[0, 7], torch.tensor([6, 7, 8, 9]))
+    torch.testing.assert_close(inputs.topk_idxs[0, 3], torch.tensor([2, 3, 8, -1], dtype=torch.int32))
+    torch.testing.assert_close(inputs.topk_idxs[0, 7], torch.tensor([6, 7, 8, 9], dtype=torch.int32))
 
 
 def test_hca_pattern_uses_all_visible_compressed_ids():
@@ -60,8 +60,8 @@ def test_hca_pattern_uses_all_visible_compressed_ids():
 
     assert inputs.kv.shape[1] == 258
     assert inputs.metadata["n_compressed"] == 2
-    torch.testing.assert_close(inputs.topk_idxs[0, 127], torch.tensor([127, 256, -1]))
-    torch.testing.assert_close(inputs.topk_idxs[0, 255], torch.tensor([255, 256, 257]))
+    torch.testing.assert_close(inputs.topk_idxs[0, 127], torch.tensor([127, 256, -1], dtype=torch.int32))
+    torch.testing.assert_close(inputs.topk_idxs[0, 255], torch.tensor([255, 256, 257], dtype=torch.int32))
 
 
 def test_decode_like_query_start_uses_tail_window_and_visible_compressed_ids():
@@ -80,4 +80,4 @@ def test_decode_like_query_start_uses_tail_window_and_visible_compressed_ids():
     )
 
     # Raw ids are 0..255 and C4 ids are appended at 256..319.
-    torch.testing.assert_close(inputs.topk_idxs[0, 0], torch.tensor([254, 255, 318, 319]))
+    torch.testing.assert_close(inputs.topk_idxs[0, 0], torch.tensor([254, 255, 318, 319], dtype=torch.int32))
