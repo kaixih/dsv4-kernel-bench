@@ -329,3 +329,95 @@ Failed to detect the maximum supported TileIR bytecode version; falling back to 
 So the current cuTile failure is not isolated to Megatron mHC. Resolve the
 official cuTile sample failure first, likely by changing the container/compiler
 stack or using NVIDIA's known-good cuTile runtime for this driver/GPU.
+
+### CUDA 13 SGLang mHC Path
+
+For NVIDIA fused cuTile mHC, use the CUDA13 SGLang image rather than the
+CUDA12.9 Miles image. On `umbriel-b200-044`, there was no image literally named
+`sglang_dev`; the available CUDA13 SGLang image was:
+
+```text
+lmsysorg/sglang:v0.5.11
+```
+
+Observed stack:
+
+```text
+container CUDA:      13.0.1
+nvcc:                13.0.88
+torch:               2.11.0+cu130
+temporary cuTile:    cuda-tile==1.4.0
+temporary compiler:  cuda-toolkit==13.3.0
+temporary tileiras:  nvidia-cuda-tileiras==13.3.36
+temporary nvcc/nvvm: nvidia-cuda-nvcc==13.3.33, nvidia-nvvm==13.3.33
+driver:              595.58.03
+GPU:                 B200, sm_100
+```
+
+Start the container:
+
+```bash
+docker run --rm --gpus all --ipc=host \
+  --ulimit memlock=-1 --ulimit stack=67108864 \
+  -v /home/scratch.kaixih_ent/repo/dsv4-kernel-bench:/scratch/repo/dsv4-kernel-bench \
+  -v /home/scratch.kaixih_ent/repo/miles-pr1045:/scratch/repo/miles-pr1045 \
+  -v /home/scratch.kaixih_ent/repo/Megatron-LM-nvidia:/scratch/repo/Megatron-LM-nvidia \
+  -v /home/scratch.kaixih_ent/dsv4-kernel-bench-runs:/scratch/runs_host \
+  -w /scratch/repo/Megatron-LM-nvidia \
+  lmsysorg/sglang:v0.5.11 bash
+```
+
+Inside the container, install the transient cuTile stack:
+
+```bash
+python3 -m pip install --target /tmp/cutile_sglang_mhc \
+  "cuda-tile==1.4.0" "cuda-toolkit[tileiras,nvcc,nvvm]==13.3.0" pytest numpy
+
+export PATH=/tmp/cutile_sglang_mhc/nvidia/cu13/bin:/tmp/cutile_sglang_mhc/nvidia/cu13/nvvm/bin:${PATH}
+export PYTHONPATH=/tmp/cutile_sglang_mhc:/scratch/repo/Megatron-LM-nvidia:${PYTHONPATH}
+export CUDA_TILE_TEMP_DIR=/tmp/cutile_sglang_mhc_tmp
+export CUDA_TILE_CACHE_DIR=/tmp/cutile_sglang_mhc_cache
+```
+
+Validate upstream cuTile first:
+
+```bash
+git clone --depth 1 https://github.com/NVIDIA/cutile-python.git /tmp/cutile-python
+cd /tmp/cutile-python
+python3 samples/MatMul.py --correctness-check
+python3 samples/BatchMatMul.py --correctness-check
+python3 samples/AttentionFMHA.py --correctness-check
+```
+
+Expected CUDA13 result:
+
+```text
+MatMul:        pass
+BatchMatMul:   pass
+AttentionFMHA: pass
+VectorAdd:     fails only if optional cupy is missing
+```
+
+Then validate Megatron fused mHC:
+
+```bash
+cd /scratch/repo/Megatron-LM-nvidia
+python3 -m pytest -q tests/unit_tests/fusions/test_fused_mhc_kernels.py -k Fused
+```
+
+Observed CUDA13 result:
+
+```text
+22 passed, 29 warnings in 41.51s
+```
+
+Run outputs from the first successful CUDA13 probe:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_cuda13_cutile_probe_20260531-225517
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_correctness_probe_20260531-230829
+```
+
+Use this CUDA13 SGLang path for the next NVIDIA fused cuTile mHC performance
+comparison. Keep the CUDA12.9 Miles image for Miles TileKernels baselines unless
+Miles TileKernels can be made to import cleanly in the same SGLang image.

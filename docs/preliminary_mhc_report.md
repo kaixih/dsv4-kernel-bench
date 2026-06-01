@@ -288,6 +288,69 @@ The failing bytecode files were still left under:
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/cutile_official_probe_20260531-224746/mhc_crash_tmp
 ```
 
+### CUDA 13 SGLang Probe
+
+The follow-up experiment moved only the runtime stack, not the B200 allocation
+or Megatron source tree. There was no local image literally named
+`sglang_dev`; the available SGLang CUDA 13 image on the node was
+`lmsysorg/sglang:v0.5.11`.
+
+Environment:
+
+```text
+Node:                umbriel-b200-044
+GPU:                 8x NVIDIA B200, driver 595.58.03
+Container image:     lmsysorg/sglang:v0.5.11
+Container CUDA:      13.0.1
+Torch:               2.11.0+cu130
+Temporary cuTile:    cuda-tile==1.4.0
+Temporary compiler:  cuda-toolkit==13.3.0
+tileiras:            nvidia-cuda-tileiras==13.3.36
+nvcc/nvvm:           nvidia-cuda-nvcc==13.3.33, nvidia-nvvm==13.3.33
+Run output:          /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_cuda13_cutile_probe_20260531-225517
+Correctness output:  /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_correctness_probe_20260531-230829
+```
+
+Official `NVIDIA/cutile-python` sample result in this stack:
+
+| Upstream cuTile command | Result | Notes |
+| --- | --- | --- |
+| `samples/MatMul.py --correctness-check` | pass | all tested matmul cases passed |
+| `samples/BatchMatMul.py --correctness-check` | pass | fp16 and fp8 BMM cases passed |
+| `samples/AttentionFMHA.py --correctness-check` | pass | non-causal, causal, and autotuned causal FMHA passed |
+| `samples/quickstart/VectorAdd_quickstart.py` | skip/fail | missing optional `cupy`, not a cuTile compile failure |
+
+The CUDA13 SGLang stack also fixed the Megatron fused mHC compiler blocker.
+Initial fused forward smokes passed:
+
+| Fused cuTile primitive | Shape | Result |
+| --- | --- | --- |
+| `h_aggregate` | tiny `[1, 1, 1]` | pass |
+| `h_aggregate` | `n=2,C=256,s*b=1` | pass |
+| `proj_rms` | `n=1,k=128` | pass |
+
+A direct fwd+bwd correctness probe against local PyTorch references also
+passed four fused primitives:
+
+| Case | Result |
+| --- | --- |
+| `fused_sinkhorn_s2_b4_n4_fwd_bwd` | pass |
+| `fused_h_aggregate_s2_b4_n4_c1024_fwd_bwd` | pass |
+| `fused_h_post_bda_s2_b4_n4_c1024_bias_fwd_bwd` | pass |
+| `fused_proj_rms_m64_n8_k512_fwd_bwd` | pass |
+
+Finally, the Megatron unit test suite for the fused mHC file passed in the same
+container:
+
+```text
+python3 -m pytest -q tests/unit_tests/fusions/test_fused_mhc_kernels.py -k Fused
+22 passed, 29 warnings in 41.51s
+```
+
+This means the previous cuTile failure was a runtime-stack compatibility issue
+in `radixark/miles:deepseek-v4` with CUDA 12.9/Torch cu129 plus overlay cuTile,
+not proof that Megatron's fused mHC kernels are intrinsically broken.
+
 ### Performance Snapshot
 
 The most comparable row is the layer-boundary pre/post pipeline. It is still
@@ -328,19 +391,22 @@ NVIDIA native primitive timings, for context:
 
 Current readiness view:
 
-- Miles TileKernels is the stronger runnable path in this environment. It needs
-  a no-dependency `tile-kernels` install, but after that it imports, runs
-  forward/backward, and is faster than NVIDIA native on the tested pre/post
-  pipeline shapes.
-- NVIDIA's fused cuTile implementation is architecturally attractive and more
-  modular, but it is not ready in the tested runtime. A few toy specializations
-  compile, but the mHC-relevant shapes needed for comparison fail during Tile
-  IR compilation.
-- Official upstream cuTile samples also fail in the same runtime, so the next
-  debugging step should focus on the cuTile/`tileiras`/driver/container
-  compatibility stack before spending more time on Megatron mHC code shape.
+- In the Miles CUDA12.9 container, Miles TileKernels remains the stronger
+  runnable path. It needs a no-dependency `tile-kernels` install, but after
+  that it imports, runs forward/backward, and is faster than NVIDIA native on
+  the tested pre/post pipeline shapes.
 - NVIDIA native is useful as a local reference and fallback, not as the likely
   performance target.
-- The next fair comparison should either use NVIDIA's exact cuTile/tileiras
-  runtime expected by this Megatron branch, or file/debug the Tile IR compiler
-  failure before drawing a final performance conclusion about NVIDIA fused mHC.
+- NVIDIA fused cuTile mHC should be evaluated in the CUDA13 SGLang stack. In
+  that runtime, upstream cuTile samples pass, Megatron fused mHC forward smokes
+  pass, local fwd+bwd parity smokes pass, and Megatron's fused mHC pytest passes.
+- The CUDA12.9 Miles-container failure should be recorded as a container/compiler
+  compatibility issue. It should not block a fair NVIDIA fused cuTile perf
+  comparison if the benchmark can be run in `lmsysorg/sglang:v0.5.11` or the
+  intended `sglang_dev` CUDA13 image.
+- Next experiment: port the mHC benchmark runner to this CUDA13 SGLang runtime
+  and compare Miles TileKernels/TileLang versus NVIDIA fused cuTile on matching
+  layer-boundary shapes. If Miles TileKernels cannot import cleanly in SGLang,
+  use the CUDA13 result to validate NVIDIA fused mHC readiness and keep the
+  previous Miles CUDA12.9 numbers as a provisional baseline until a single
+  shared image is available.
