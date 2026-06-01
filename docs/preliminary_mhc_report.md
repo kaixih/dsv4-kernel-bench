@@ -309,6 +309,7 @@ tileiras:            nvidia-cuda-tileiras==13.3.36
 nvcc/nvvm:           nvidia-cuda-nvcc==13.3.33, nvidia-nvvm==13.3.33
 Run output:          /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_cuda13_cutile_probe_20260531-225517
 Correctness output:  /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_correctness_probe_20260531-230829
+Perf output:         /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_perf_probe_20260531-232024/mhc_perf_results.json
 ```
 
 Official `NVIDIA/cutile-python` sample result in this stack:
@@ -351,7 +352,7 @@ This means the previous cuTile failure was a runtime-stack compatibility issue
 in `radixark/miles:deepseek-v4` with CUDA 12.9/Torch cu129 plus overlay cuTile,
 not proof that Megatron's fused mHC kernels are intrinsically broken.
 
-### Performance Snapshot
+### CUDA12.9 Miles-Container Performance Snapshot
 
 The most comparable row is the layer-boundary pre/post pipeline. It is still
 not byte-identical across implementations:
@@ -387,6 +388,56 @@ NVIDIA native primitive timings, for context:
 | `S=64,B=1,n=4,C=7168` | `h_post_bda` | 0.0947 | 0.7207 |
 | `S=64,B=1,n=4,C=7168` | `proj_rms` | 0.1046 | 0.5853 |
 
+### CUDA13 SGLang Performance Snapshot
+
+After moving to the CUDA13 SGLang stack, NVIDIA fused cuTile mHC runs on
+meaningful shapes and is consistently faster than NVIDIA native.
+
+Run output:
+
+```text
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_perf_probe_20260531-232024/mhc_perf_results.json
+```
+
+NVIDIA native vs NVIDIA fused cuTile:
+
+| Case | Native fwd ms | Fused fwd ms | Fwd speedup | Native fwd+bwd ms | Fused fwd+bwd ms | Fwd+bwd speedup |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `S=2,B=4,n=4,C=1024` | 0.2876 | 0.1555 | 1.85x | 2.2218 | 0.7900 | 2.81x |
+| `S=64,B=1,n=4,C=7168` | 0.3703 | 0.2727 | 1.36x | 1.9659 | 0.8140 | 2.42x |
+| `S=256,B=1,n=4,C=7168` | 0.4030 | 0.3091 | 1.30x | 2.5182 | 1.0531 | 2.39x |
+
+Provisional Miles CUDA12.9 vs NVIDIA fused CUDA13 comparison:
+
+| Case | Miles TileKernels fwd ms | NVIDIA fused fwd ms | Miles TileKernels fwd+bwd ms | NVIDIA fused fwd+bwd ms | Read |
+| --- | ---: | ---: | ---: | ---: | --- |
+| `S=2,B=4,n=4,C=1024` | 0.1103 | 0.1555 | 1.3878 | 0.7900 | Miles faster forward; NVIDIA fused faster with backward |
+| `S=64,B=1,n=4,C=7168` | 0.1591 | 0.2727 | 1.3818 | 0.8140 | Same pattern |
+
+This second table is not a strict apples-to-apples benchmark because the Miles
+numbers came from `radixark/miles:deepseek-v4` with CUDA 12.9/Torch cu129,
+while the NVIDIA fused numbers came from `lmsysorg/sglang:v0.5.11` with CUDA
+13.0/Torch cu130. It is still useful directionally: NVIDIA fused cuTile looks
+ready enough to benchmark seriously, especially for training fwd+bwd.
+
+Miles TileKernels was also attempted in the CUDA13 SGLang image. After adding
+`z3-solver`, `tilelang`, and `tile-kernels`, imports succeeded:
+
+```text
+tile_kernels.modeling.mhc.ops: ok
+tilelang: ok
+```
+
+but the first TileLang lowering failed:
+
+```text
+AttributeError: '_NestedLoopCheckVisitor' object has no attribute '_inst'
+```
+
+So the single-image Miles-vs-NVIDIA mHC comparison still needs either a
+known-good TileLang build for the CUDA13 SGLang image or a Miles image that has
+the matching CUDA13 cuTile stack.
+
 ## Preliminary Interpretation
 
 Current readiness view:
@@ -400,13 +451,17 @@ Current readiness view:
 - NVIDIA fused cuTile mHC should be evaluated in the CUDA13 SGLang stack. In
   that runtime, upstream cuTile samples pass, Megatron fused mHC forward smokes
   pass, local fwd+bwd parity smokes pass, and Megatron's fused mHC pytest passes.
+- In CUDA13 SGLang, NVIDIA fused cuTile is faster than NVIDIA native on the
+  tested layer-boundary pipeline shapes: about 1.3-1.9x faster forward and
+  about 2.4-2.8x faster forward+backward.
+- The provisional cross-container comparison suggests Miles TileKernels is
+  still faster for forward-only, while NVIDIA fused cuTile is faster for
+  forward+backward on the two shared shapes. Treat this as directional until
+  both paths run in the same image.
 - The CUDA12.9 Miles-container failure should be recorded as a container/compiler
   compatibility issue. It should not block a fair NVIDIA fused cuTile perf
   comparison if the benchmark can be run in `lmsysorg/sglang:v0.5.11` or the
   intended `sglang_dev` CUDA13 image.
-- Next experiment: port the mHC benchmark runner to this CUDA13 SGLang runtime
-  and compare Miles TileKernels/TileLang versus NVIDIA fused cuTile on matching
-  layer-boundary shapes. If Miles TileKernels cannot import cleanly in SGLang,
-  use the CUDA13 result to validate NVIDIA fused mHC readiness and keep the
-  previous Miles CUDA12.9 numbers as a provisional baseline until a single
-  shared image is available.
+- Next experiment: fix the SGLang TileLang lowering issue or build a shared
+  image. Until then, use Miles CUDA12.9 numbers as the Miles baseline and use
+  CUDA13 SGLang for NVIDIA fused cuTile readiness/perf.

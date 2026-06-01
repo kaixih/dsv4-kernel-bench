@@ -416,8 +416,31 @@ Run outputs from the first successful CUDA13 probe:
 ```text
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_cuda13_cutile_probe_20260531-225517
 /home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_correctness_probe_20260531-230829
+/home/scratch.kaixih_ent/dsv4-kernel-bench-runs/sglang_mhc_perf_probe_20260531-232024/mhc_perf_results.json
 ```
 
 Use this CUDA13 SGLang path for the next NVIDIA fused cuTile mHC performance
 comparison. Keep the CUDA12.9 Miles image for Miles TileKernels baselines unless
 Miles TileKernels can be made to import cleanly in the same SGLang image.
+
+Observed NVIDIA mHC perf in the CUDA13 SGLang image:
+
+| Case | Native fwd ms | Fused fwd ms | Native fwd+bwd ms | Fused fwd+bwd ms |
+| --- | ---: | ---: | ---: | ---: |
+| `S=2,B=4,n=4,C=1024` | 0.2876 | 0.1555 | 2.2218 | 0.7900 |
+| `S=64,B=1,n=4,C=7168` | 0.3703 | 0.2727 | 1.9659 | 0.8140 |
+| `S=256,B=1,n=4,C=7168` | 0.4030 | 0.3091 | 2.5182 | 1.0531 |
+
+Miles TileKernels in the CUDA13 SGLang image imports after installing
+`z3-solver`, but kernel lowering fails at runtime:
+
+```text
+AttributeError: '_NestedLoopCheckVisitor' object has no attribute '_inst'
+```
+
+So the current clean split is:
+
+```text
+Miles TileKernels mHC baseline:       radixark/miles:deepseek-v4
+NVIDIA fused cuTile mHC baseline:     lmsysorg/sglang:v0.5.11
+```
