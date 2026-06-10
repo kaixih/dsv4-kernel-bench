@@ -22,6 +22,35 @@ full Megatron layer integration yet.
 | CSA/HCA compressor | Miles DeepSeek-V4 compressor path, TileLang-optimized variants where present | Megatron compressor path; SGLang/Miles discuss Flash Compressor-style fused variants | Not measured yet; synthetic compressed KV entries stand in for its output |
 | mHC | Miles/TileKernels mHC kernels | NVIDIA Megatron/TransformerEngine mHC fusion work | Separate future kernel track |
 
+## Miles Kernel Source Links
+
+NeMo AutoModel's vendored Miles docs attribute the DSv4 sparse-attention kernels
+to `yueming-yuan/miles` commit `e561465d0b9bbf06188b7a5e2020dc7fd691f732`,
+`deepseek-v4` branch. That public repo is a fork of `radixark/miles`.
+
+Pinned source links:
+
+- Ops directory:
+  https://github.com/yueming-yuan/miles/tree/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops
+- Sparse-attention autograd wrapper:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/attention_core.py
+- Sparse MQA TileLang forward:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/kernel/tilelang_sparse_mla_fwd.py
+- Sparse MQA TileLang backward:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/kernel/tilelang_sparse_mla_bwd.py
+- TileLang indexer wrapper:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/kernel/tilelang_indexer.py
+- TileLang indexer forward:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/kernel/tilelang_indexer_fwd.py
+- TileLang indexer backward:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/kernel/tilelang_indexer_bwd.py
+- V4 indexer glue:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/v4_indexer.py
+- Compressor module:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/compressor.py
+- Hyper-connection / mHC integration:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/hyper_connection.py
+
 Sources:
 
 - DeepSeek-V4 Flash config: `n_heads=64`, `head_dim=512`, `window_size=128`,
