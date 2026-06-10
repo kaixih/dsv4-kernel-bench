@@ -50,6 +50,42 @@ Pinned source links:
   https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/compressor.py
 - Hyper-connection / mHC integration:
   https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/hyper_connection.py
+- Miles TileLang Sinkhorn helper used by the hyper-connection mixer:
+  https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/kernel/sinkhorn.py
+
+In this pinned Miles revision, `hyper_connection.py` uses PyTorch/einops for
+most mHC data movement and calls the TileLang `hc_split_sinkhorn` helper to
+produce the per-token `(pre, post, comb)` mixer tensors.
+
+## NVIDIA mHC Source Links
+
+NVIDIA Megatron-LM PR #3828 (`[dev] mHC kernel fusion`) merged the cuTile mHC
+fusion path:
+
+- PR:
+  https://github.com/NVIDIA/Megatron-LM/pull/3828
+- Fused cuTile kernels:
+  https://github.com/NVIDIA/Megatron-LM/blob/dee55fbca4fad85704c88b4bb30fd45cfe5c8f1a/megatron/core/fusions/fused_mhc_kernels.py
+- Megatron hyper-connection integration:
+  https://github.com/NVIDIA/Megatron-LM/blob/dee55fbca4fad85704c88b4bb30fd45cfe5c8f1a/megatron/core/transformer/hyper_connection.py
+- Unit tests:
+  https://github.com/NVIDIA/Megatron-LM/blob/dee55fbca4fad85704c88b4bb30fd45cfe5c8f1a/tests/unit_tests/fusions/test_fused_mhc_kernels.py
+
+The fused Megatron file lists four cuTile operations: `sinkhorn`,
+`h_aggregate`, `h_post_bda`, and `proj_rms`. It requires `cuda.tile` and falls
+back to reference hyper-connection code when cuTile is unavailable or
+`use_fused_mhc=False`.
+
+TransformerEngine PR #2790 also merged Triton mHC kernels / PyTorch APIs:
+
+- PR:
+  https://github.com/NVIDIA/TransformerEngine/pull/2790
+- Common Triton kernel:
+  https://github.com/NVIDIA/TransformerEngine/blob/33032a535574fdaaf57eda416715d29518473514/transformer_engine/common/triton/mhc.py
+- PyTorch Triton wrapper:
+  https://github.com/NVIDIA/TransformerEngine/blob/33032a535574fdaaf57eda416715d29518473514/transformer_engine/pytorch/triton/mhc.py
+- Tests:
+  https://github.com/NVIDIA/TransformerEngine/blob/33032a535574fdaaf57eda416715d29518473514/tests/pytorch/test_mhc.py
 
 Sources:
 
