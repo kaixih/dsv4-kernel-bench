@@ -24,9 +24,50 @@ full Megatron layer integration yet.
 
 ## Miles Kernel Source Links
 
-NeMo AutoModel's vendored Miles docs attribute the DSv4 sparse-attention kernels
-to `yueming-yuan/miles` commit `e561465d0b9bbf06188b7a5e2020dc7fd691f732`,
-`deepseek-v4` branch. That public repo is a fork of `radixark/miles`.
+Current `radixark/miles` main commit checked on 2026-06-10:
+
+```text
+9437366e0aa3a25294720f70d18b081067595f85
+[fix] fix deepseek v4 blackwell path (#1316)
+```
+
+Current Miles mHC / hyper-connection path:
+
+- Miles Hyper-Connection wrapper:
+  https://github.com/radixark/miles/blob/9437366e0aa3a25294720f70d18b081067595f85/miles_plugins/models/deepseek_v4/ops/hyper_connection.py
+- It imports `tile_kernels.modeling.mhc.ops` from DeepSeek-AI TileKernels:
+  https://github.com/deepseek-ai/TileKernels/tree/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops
+- TileLang MHC kernel implementations:
+  https://github.com/deepseek-ai/TileKernels/tree/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/mhc
+
+Current Miles mHC uses these TileKernels ops:
+
+- `mhc_pre_big_fuse` for inference/no-grad pre path:
+  https://github.com/deepseek-ai/TileKernels/blob/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops/pre_big_fuse.py
+- `mhc_pre_norm_fn`:
+  https://github.com/deepseek-ai/TileKernels/blob/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops/norm_fn.py
+- `mhc_pre_split_mixes`:
+  https://github.com/deepseek-ai/TileKernels/blob/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops/pre_split_mixes.py
+- `sinkhorn_normalize`:
+  https://github.com/deepseek-ai/TileKernels/blob/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops/sinkhorn.py
+- `mhc_pre_apply_mix`:
+  https://github.com/deepseek-ai/TileKernels/blob/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops/pre_apply_mix.py
+- `mhc_post`:
+  https://github.com/deepseek-ai/TileKernels/blob/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops/post.py
+- `mhc_head_compute_mix`:
+  https://github.com/deepseek-ai/TileKernels/blob/36d9e45d38e204ebb87e6f6e833821eee0482fe5/tile_kernels/modeling/mhc/ops/head_compute_mix.py
+
+So for current Miles, mHC is not just a Sinkhorn helper. The wrapper delegates
+`hc_pre_raw`, `hc_post_raw`, and `hc_head_raw` to DeepSeek-AI TileKernels MHC
+ops. The no-grad/inference pre path uses `mhc_pre_big_fuse`; the grad path uses
+`mhc_pre_norm_fn -> mhc_pre_split_mixes -> sinkhorn_normalize ->
+mhc_pre_apply_mix`; the post path uses `mhc_post`; the head path uses
+`mhc_head_compute_mix` plus `mhc_pre_apply_mix`.
+
+NeMo AutoModel's vendored Miles docs attribute an older DSv4 sparse-attention
+snapshot to `yueming-yuan/miles` commit
+`e561465d0b9bbf06188b7a5e2020dc7fd691f732`, `deepseek-v4` branch. That public
+repo is a fork of `radixark/miles`.
 
 Pinned source links:
 
@@ -53,9 +94,10 @@ Pinned source links:
 - Miles TileLang Sinkhorn helper used by the hyper-connection mixer:
   https://github.com/yueming-yuan/miles/blob/e561465d0b9bbf06188b7a5e2020dc7fd691f732/miles_plugins/models/deepseek_v4/ops/kernel/sinkhorn.py
 
-In this pinned Miles revision, `hyper_connection.py` uses PyTorch/einops for
-most mHC data movement and calls the TileLang `hc_split_sinkhorn` helper to
-produce the per-token `(pre, post, comb)` mixer tensors.
+In that older pinned Miles revision, `hyper_connection.py` uses PyTorch/einops
+for most mHC data movement and calls the TileLang `hc_split_sinkhorn` helper to
+produce the per-token `(pre, post, comb)` mixer tensors. Do not treat that older
+revision as the current Miles mHC implementation.
 
 ## NVIDIA mHC Source Links
 
